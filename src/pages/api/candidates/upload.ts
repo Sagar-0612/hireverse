@@ -3,35 +3,10 @@ import { connectDB } from '../../../db/connection';
 import { Candidate } from '../../../db/models/Candidate';
 import { Job } from '../../../db/models/Job';
 import { Types } from 'mongoose';
+import { extractResumeText, analyzeResume } from '../../../lib/resumeAnalysis';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
-
-function extractName(filename: string): string {
-  let name = filename.replace(/\.(pdf|docx|doc|txt)$/i, '');
-  name = name.replace(/[-_]/g, ' ');
-  // split camelCase
-  name = name.replace(/([a-z])([A-Z])/g, '$1 $2');
-  // strip common noise words
-  name = name.replace(/\b(resume|cv|curriculum|vitae|application|final|updated|new|v\d+)\b/gi, '');
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  // capitalize each word; only keep first 3 words as the name
-  return words
-    .slice(0, 3)
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(' ') || 'Unknown Candidate';
-}
-
-function rand(min: number, max: number) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function getRecommendation(score: number): string {
-  if (score >= 88) return 'Strongly Recommend';
-  if (score >= 75) return 'Recommend';
-  if (score >= 65) return 'Consider';
-  return 'Not Recommended';
-}
 
 export const POST: APIRoute = async ({ request }) => {
   await connectDB();
@@ -56,28 +31,34 @@ export const POST: APIRoute = async ({ request }) => {
       if (!file.name) continue;
 
       const arrayBuffer = await file.arrayBuffer();
-      const base64 = Buffer.from(arrayBuffer).toString('base64');
-      const score = rand(60, 96);
-      const skillsMatch = rand(62, 97);
-      const educationMatch = rand(60, 94);
-      const experience = rand(1, 10);
+      const buffer = Buffer.from(arrayBuffer);
+      const base64 = buffer.toString('base64');
+      const mimeType = file.type || 'application/octet-stream';
+
+      const text = await extractResumeText(buffer, mimeType, file.name);
+      const analysis = analyzeResume(text, file.name, {
+        requiredSkills: job.requiredSkills,
+        niceToHaveSkills: job.niceToHaveSkills,
+        education: job.education,
+        level: job.level,
+      });
 
       const candidate = await Candidate.create({
         jobId,
-        name: extractName(file.name),
-        email: '',
-        phone: '',
-        location: '',
-        score,
-        experience,
-        skillsMatch,
-        educationMatch,
-        recommendation: getRecommendation(score),
+        name: analysis.name,
+        email: analysis.email,
+        phone: analysis.phone,
+        location: analysis.location,
+        score: analysis.score,
+        experience: analysis.experience,
+        skillsMatch: analysis.skillsMatch,
+        educationMatch: analysis.educationMatch,
+        recommendation: analysis.recommendation,
         status: 'applied',
         resumeName: file.name,
-        resumeType: file.type || 'application/octet-stream',
+        resumeType: mimeType,
         resumeBase64: base64,
-        skills: (job.requiredSkills || []).slice(0, rand(2, 5)),
+        skills: analysis.skills,
       });
 
       created.push({ ...candidate.toObject(), _id: candidate._id.toString() });
