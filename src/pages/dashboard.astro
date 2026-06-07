@@ -151,7 +151,7 @@ for (let i = 5; i >= 0; i--) {
   </div>
 
   <!-- Main grid -->
-  <div style="display:grid;grid-template-columns:1fr 360px;gap:20px;align-items:start;">
+  <div class="grid-main-aside" style="--aside-w:360px;">
     <div style="display:flex;flex-direction:column;gap:20px;">
       <!-- Hiring Funnel -->
       <div class="card shadow-lvl-2">
@@ -255,15 +255,18 @@ for (let i = 5; i >= 0; i--) {
 
       <!-- Recent Activity -->
       <div class="card shadow-lvl-2">
-        <div style="margin-bottom:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;">
           <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0;">Recent Activity</h2>
+          {recentActivity.length > 0 && (
+            <button id="clear-activity-btn" class="btn btn-ghost btn-sm" style="color:var(--fg-mute);">Clear</button>
+          )}
         </div>
         {recentActivity.length === 0 ? (
-          <div style="text-align:center;padding:20px;color:var(--fg-mute);font-size:13px;">No recent activity.</div>
+          <div id="activity-empty" style="text-align:center;padding:20px;color:var(--fg-mute);font-size:13px;">No recent activity.</div>
         ) : (
-          <div style="display:flex;flex-direction:column;">
+          <div id="activity-list" class="scroll-list">
             {recentActivity.map((act, idx) => (
-              <div style={`display:flex;gap:12px;padding:10px 0;${idx < recentActivity.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}`}>
+              <div class="activity-row" style={`display:flex;gap:12px;padding:10px 0;${idx < recentActivity.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}`}>
                 <div style="width:28px;height:28px;border-radius:6px;background:var(--bg-soft-2);display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--fg-mute);">
                   <span set:html={getIconSvg(act.icon)} style="display:inline-flex;width:13px;height:13px;" />
                 </div>
@@ -280,8 +283,33 @@ for (let i = 5; i >= 0; i--) {
   </div>
 </AppLayout>
 
-<style>
-  @media (max-width: 900px) {
-    div[style*="grid-template-columns:1fr 360px"] { grid-template-columns: 1fr !important; }
-  }
-</style>
+<script>
+  const clearBtn = document.getElementById('clear-activity-btn') as HTMLButtonElement | null;
+  clearBtn?.addEventListener('click', async () => {
+    const ok = await (window as any).hvConfirm({
+      title: 'Clear recent activity',
+      message: 'This permanently deletes the entire activity log. This cannot be undone.',
+      confirmLabel: 'Clear all',
+      destructive: true,
+    });
+    if (!ok) return;
+
+    clearBtn.disabled = true;
+    const res = await fetch('/api/activity', { method: 'DELETE' });
+    if (res.ok) {
+      const list = document.getElementById('activity-list');
+      const card = clearBtn.closest('.card');
+      if (list) list.remove();
+      const empty = document.createElement('div');
+      empty.id = 'activity-empty';
+      empty.style.cssText = 'text-align:center;padding:20px;color:var(--fg-mute);font-size:13px;';
+      empty.textContent = 'No recent activity.';
+      card?.appendChild(empty);
+      clearBtn.remove();
+      (window as any).hvToast('Activity log cleared.', 'success');
+    } else {
+      clearBtn.disabled = false;
+      (window as any).hvToast('Failed to clear activity log.', 'error');
+    }
+  });
+</script>

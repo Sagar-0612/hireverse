@@ -84,7 +84,7 @@ const isCompleted = interview.status === 'completed';
 
   {isCompleted ? (
     <div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:20px;">
+      <div class="grid-cols-3" style="margin-bottom:20px;">
         <div class="stat-card shadow-lvl-2" style="text-align:center;">
           <div class="stat-label">Communication</div>
           <div class="stat-value">{interview.commScore}</div>
@@ -102,7 +102,7 @@ const isCompleted = interview.status === 'completed';
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 320px;gap:20px;align-items:start;">
+      <div class="grid-main-aside" style="--aside-w:320px;">
         <div class="card shadow-lvl-2">
           <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Summary</h2>
           {interview.transcriptSummary ? (
@@ -137,7 +137,7 @@ const isCompleted = interview.status === 'completed';
       </div>
     </div>
   ) : (
-    <div style="display:grid;grid-template-columns:1fr 320px;gap:20px;align-items:start;">
+    <div class="grid-main-aside" style="--aside-w:320px;">
       <div class="card shadow-lvl-2">
         <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Interview Guide</h2>
         <div style="display:flex;flex-direction:column;gap:12px;">
@@ -179,7 +179,7 @@ const isCompleted = interview.status === 'completed';
     <div style="position:absolute;inset:0;background:rgba(0,0,0,0.6);" id="modal-overlay"></div>
     <div class="card shadow-lvl-5" style="position:relative;z-index:1;width:480px;max-width:calc(100vw - 32px);">
       <h2 style="font-size:16px;font-weight:600;color:var(--fg);margin:0 0 20px;">Complete Interview</h2>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">
+      <div class="grid-cols-3" style="margin-bottom:16px;">
         <div>
           <label style="font-size:12px;font-weight:500;color:var(--fg-mute);display:block;margin-bottom:6px;">Comm Score (0-100)</label>
           <input id="comm-score" type="number" min="0" max="100" class="input" value="75" />

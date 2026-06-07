@@ -130,7 +130,7 @@ const recentActivity = recentLogs.map(l => ({
     </div>
   </div>
 
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+  <div class="grid-cols-2" style="margin-bottom:20px;">
     <div class="card shadow-lvl-2">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
         <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0;">Applicant Funnel</h2>
@@ -180,7 +180,7 @@ const recentActivity = recentLogs.map(l => ({
     </div>
   </div>
 
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+  <div class="grid-cols-2" style="margin-bottom:20px;">
     <div class="card shadow-lvl-2">
       <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0 0 20px;">Top Jobs by Applications</h2>
       {topJobsRaw.length > 0 ? (
@@ -226,13 +226,18 @@ const recentActivity = recentLogs.map(l => ({
   </div>
 
   <div class="card shadow-lvl-2">
-    <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0 0 16px;">Recent Activity</h2>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;">
+      <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0;">Recent Activity</h2>
+      {recentActivity.length > 0 && (
+        <button id="clear-activity-btn" class="btn btn-ghost btn-sm" style="color:var(--fg-mute);">Clear</button>
+      )}
+    </div>
     {recentActivity.length === 0 ? (
-      <div class="empty-state" style="padding:32px 0;">No recent activity.</div>
+      <div id="activity-empty" class="empty-state" style="padding:32px 0;">No recent activity.</div>
     ) : (
-      <div style="display:flex;flex-direction:column;">
+      <div id="activity-list" class="scroll-list">
         {recentActivity.map((act, idx) => (
-          <div style={`display:flex;gap:12px;padding:10px 0;${idx < recentActivity.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}`}>
+          <div class="activity-row" style={`display:flex;gap:12px;padding:10px 0;${idx < recentActivity.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}`}>
             <div style="width:28px;height:28px;border-radius:6px;background:var(--bg-soft-2);display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--fg-mute);">
               <span set:html={getIconSvg(act.icon)} style="display:inline-flex;width:13px;height:13px;" />
             </div>
@@ -246,3 +251,35 @@ const recentActivity = recentLogs.map(l => ({
     )}
   </div>
 </AppLayout>
+
+<script>
+  const clearBtn = document.getElementById('clear-activity-btn') as HTMLButtonElement | null;
+  clearBtn?.addEventListener('click', async () => {
+    const ok = await (window as any).hvConfirm({
+      title: 'Clear recent activity',
+      message: 'This permanently deletes the entire activity log. This cannot be undone.',
+      confirmLabel: 'Clear all',
+      destructive: true,
+    });
+    if (!ok) return;
+
+    clearBtn.disabled = true;
+    const res = await fetch('/api/activity', { method: 'DELETE' });
+    if (res.ok) {
+      const list = document.getElementById('activity-list');
+      const card = clearBtn.closest('.card');
+      if (list) list.remove();
+      const empty = document.createElement('div');
+      empty.id = 'activity-empty';
+      empty.className = 'empty-state';
+      empty.style.padding = '32px 0';
+      empty.textContent = 'No recent activity.';
+      card?.appendChild(empty);
+      clearBtn.remove();
+      (window as any).hvToast('Activity log cleared.', 'success');
+    } else {
+      clearBtn.disabled = false;
+      (window as any).hvToast('Failed to clear activity log.', 'error');
+    }
+  });
+</script>

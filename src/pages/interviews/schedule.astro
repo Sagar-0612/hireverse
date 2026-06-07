@@ -84,7 +84,7 @@ const today = new Date().toISOString().split('T')[0];
 
       <div class="card shadow-lvl-2">
         <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Date & Time</h2>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="grid-cols-2">
           <div>
             <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Date <span style="color:#ee0000;">*</span></label>
             <input type="date" name="date" class="input" required style="height:36px;" min={today} />

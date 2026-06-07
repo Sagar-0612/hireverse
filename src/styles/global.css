@@ -158,6 +158,7 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100dvh;
+  min-width: 0;
 }
 
 .topbar {
@@ -175,6 +176,7 @@ body {
 
 .page-content {
   flex: 1;
+  min-width: 0;
   padding: 32px 24px;
   max-width: 1400px;
   width: 100%;
@@ -537,7 +539,7 @@ td {
 .tooltip-wrapper:hover .tooltip { opacity: 1; }
 
 /* ── Tab ── */
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); padding-bottom: 0; margin-bottom: 24px; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); padding-bottom: 0; margin-bottom: 24px; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; }
 
 .tab {
   padding: 8px 14px;
@@ -556,16 +558,64 @@ td {
 .tab.active { color: var(--fg); font-weight: 500; border-bottom-color: var(--fg); }
 
 /* ── Search input ── */
-.search-wrap { position: relative; }
+.search-wrap { position: relative; min-width: 0; }
 .search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--fg-mute); pointer-events: none; }
 .search-input { padding-left: 32px; }
 
+/* ── Responsive grid helpers ──
+   Pages declare layout intent via these classes (plus a `--aside-w` custom
+   property where relevant) instead of hardcoding pixel-width grid columns
+   inline — that's what let every one of these collapse to a single column
+   below the breakpoints in one place rather than per-page. */
+.grid-main-aside {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, var(--aside-w, 320px));
+  gap: 20px;
+  align-items: start;
+}
+.grid-cols-2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+.grid-cols-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+/* ── Scrollable, cappable lists (Recent Activity, etc.) ──
+   Keeps long-running audit/feed lists from pushing the rest of the page
+   down indefinitely as more entries accumulate. */
+.scroll-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 420px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
 /* ── Responsive ── */
+@media (max-width: 1024px) {
+  .grid-main-aside { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 860px) {
+  .grid-cols-3 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .grid-cols-2,
+  .grid-cols-3 { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 768px) {
   .sidebar { transform: translateX(-100%); }
   .sidebar.open { transform: translateX(0); }
   .main-content { margin-left: 0; }
   .page-content { padding: 20px 16px; }
+}
+@media (max-width: 480px) {
+  .page-content { padding: 16px 12px; }
+  .topbar { padding: 0 12px; gap: 8px; }
+  .search-wrap { max-width: none !important; }
 }
 
 /* ── Empty state ── */

@@ -37,7 +37,7 @@ const iconSvgByKey = Object.fromEntries(iconKeys.map(k => [k, getIconSvg(k)]));
     <form id="edit-form" style="display:flex;flex-direction:column;gap:20px;">
       <div class="card shadow-lvl-2">
         <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Basic Information</h2>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="grid-cols-2">
           <div style="grid-column:1/-1;">
             <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Job Title</label>
             <input type="text" name="title" class="input" value={job.title} required />
@@ -89,7 +89,9 @@ const iconSvgByKey = Object.fromEntries(iconKeys.map(k => [k, getIconSvg(k)]));
       <div class="card shadow-lvl-2">
         <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 6px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Hiring Pipeline</h2>
         <p style="font-size:12px;color:var(--fg-mute);margin:0 0 14px;">The exact stages candidates move through for this job — rename, recolor, reorder, add, or remove them. Candidates can only ever move forward through whatever stages remain.</p>
-        <div id="pipeline-rows" style="display:flex;flex-direction:column;gap:8px;"></div>
+        <div id="pipeline-rows-scroll" style="overflow-x:auto;">
+          <div id="pipeline-rows" style="display:flex;flex-direction:column;gap:8px;min-width:560px;"></div>
+        </div>
         <button type="button" id="add-stage-btn" class="btn btn-secondary btn-sm" style="margin-top:12px;">+ Add Stage</button>
         <div id="pipeline-error" style="display:none;margin-top:10px;padding:10px 12px;border-radius:6px;background:#fee2e2;color:#991b1b;font-size:12px;"></div>
         <div id="pipeline-success" style="display:none;margin-top:10px;padding:10px 12px;border-radius:6px;background:#d1fae5;color:#065f46;font-size:12px;"></div>

@@ -70,7 +70,7 @@ const skillScores = skillsToShow.map((skill: string) => {
       <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;margin-top:4px;">AI Score</div>
     </div>
     <div style="width:1px;height:48px;background:var(--border);flex-shrink:0;"></div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:20px;flex:1;min-width:200px;">
+    <div class="grid-cols-3" style="flex:1;min-width:200px;gap:20px;">
       <div>
         <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Skills Match</div>
         <div style="font-size:20px;font-weight:600;color:var(--fg);">{candidate.skillsMatch}%</div>
@@ -96,7 +96,7 @@ const skillScores = skillsToShow.map((skill: string) => {
     </div>
   </div>
 
-  <div style="display:grid;grid-template-columns:1fr 300px;gap:20px;align-items:start;">
+  <div class="grid-main-aside" style="--aside-w:300px;">
     <div style="display:flex;flex-direction:column;gap:20px;">
       <!-- AI Insights -->
       <div class="card shadow-lvl-2">
