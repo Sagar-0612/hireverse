@@ -1,0 +1,41 @@
+---
+import "../styles/global.css";
+---
+
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>404 — Page Not Found · HireVerse AI</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+</head>
+<body>
+  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);padding:24px;">
+    <div style="text-align:center;max-width:420px;">
+      <div style="width:56px;height:56px;border-radius:14px;background:var(--fg);display:flex;align-items:center;justify-content:center;margin:0 auto 24px;">
+        <svg width="28" height="28" viewBox="0 0 16 16" fill="none">
+          <path d="M3 8l3 3 7-7" stroke="var(--bg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--fg-mute);letter-spacing:0.5px;margin-bottom:8px;">ERROR 404</div>
+      <h1 style="font-size:28px;font-weight:600;color:var(--fg);letter-spacing:-0.6px;margin-bottom:12px;">Page not found</h1>
+      <p style="font-size:14px;line-height:1.6;color:var(--fg-body);margin-bottom:28px;">
+        The page you're looking for doesn't exist, may have been moved, or the link might be broken.
+      </p>
+      <div style="display:flex;gap:10px;justify-content:center;">
+        <a href="/dashboard" class="btn btn-primary">Back to Dashboard</a>
+        <a href="javascript:history.back()" class="btn btn-secondary">Go Back</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const saved = localStorage.getItem("hv-theme");
+      if (saved === "light") document.documentElement.classList.remove("dark");
+      else document.documentElement.classList.add("dark");
+    })();
+  </script>
+</body>
+</html>
