@@ -1,5 +1,24 @@
 import mongoose, { Schema, type Document } from 'mongoose';
 
+export interface IPipelineStage {
+  key: string;
+  label: string;
+  color: string;
+  icon: string;
+  order: number;
+}
+
+const PipelineStageSchema = new Schema<IPipelineStage>(
+  {
+    key:   { type: String, required: true },
+    label: { type: String, required: true },
+    color: { type: String, default: '#6b7280' },
+    icon:  { type: String, default: 'circle' },
+    order: { type: Number, required: true },
+  },
+  { _id: false }
+);
+
 export interface IJob extends Document {
   title: string;
   department: string;
@@ -18,6 +37,7 @@ export interface IJob extends Document {
   autoRank: boolean;
   aiSummary: boolean;
   biasCheck: boolean;
+  pipeline: IPipelineStage[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -41,6 +61,7 @@ const JobSchema = new Schema<IJob>(
     autoRank:          { type: Boolean, default: true },
     aiSummary:         { type: Boolean, default: true },
     biasCheck:         { type: Boolean, default: false },
+    pipeline:          { type: [PipelineStageSchema], default: [] },
   },
   { timestamps: true }
 );

@@ -3,18 +3,28 @@ import AppLayout from "../../layouts/AppLayout.astro";
 import { connectDB } from "../../db/connection";
 import { Candidate } from "../../db/models/Candidate";
 import { Team } from "../../db/models/Team";
+import { sortedPipeline, bucketForCandidate } from "../../lib/pipeline";
 
 await connectDB();
-const rawCandidates = await Candidate.find({
-  status: { $in: ['applied','screening','shortlisted','interview'] }
-}).populate('jobId', 'title').lean();
+const rawCandidates = await Candidate.find({ rejected: { $ne: true } })
+  .populate('jobId', 'title pipeline')
+  .lean();
 
-const candidates = rawCandidates.map(c => ({
-  id: c._id.toString(),
-  name: c.name,
-  jobTitle: (c.jobId as any)?.title || '',
-  jobId: (c.jobId as any)?._id?.toString() || '',
-}));
+// Only candidates still moving through a pipeline (not yet at the final/"hired"
+// stage and not rejected) are schedulable for further rounds.
+const candidates = rawCandidates
+  .filter(c => bucketForCandidate(c, (c.jobId as any)?.pipeline || []) !== 'Hired')
+  .map(c => {
+    const pipeline = sortedPipeline((c.jobId as any)?.pipeline || []);
+    return {
+      id: c._id.toString(),
+      name: c.name,
+      jobTitle: (c.jobId as any)?.title || '',
+      jobId: (c.jobId as any)?._id?.toString() || '',
+      currentStage: c.currentStage,
+      stages: pipeline.map(s => ({ key: s.key, label: s.label })),
+    };
+  });
 
 const teamMembers = await Team.find({ status: 'active' }).lean();
 
@@ -37,31 +47,38 @@ const today = new Date().toISOString().split('T')[0];
 
     <div id="error-banner" style="display:none;background:var(--bg-soft);border:1px solid #ee0000;border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#ee0000;"></div>
 
+    {candidates.length === 0 ? (
+      <div class="card shadow-lvl-2 empty-state" style="padding:32px;">
+        <div style="font-size:15px;font-weight:500;color:var(--fg);margin-bottom:4px;">No schedulable candidates</div>
+        <div style="font-size:13px;">Every candidate is either hired or rejected — upload resumes or move someone forward in their pipeline first.</div>
+      </div>
+    ) : (
     <form id="schedule-form" style="display:flex;flex-direction:column;gap:20px;">
       <div class="card shadow-lvl-2">
-        <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Candidate & Job</h2>
+        <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Candidate & Stage</h2>
         <div style="display:flex;flex-direction:column;gap:14px;">
           <div>
             <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Candidate <span style="color:#ee0000;">*</span></label>
-            <select name="candidateId" class="select" required>
+            <select id="candidate-select" name="candidateId" class="select" required>
               <option value="">Select candidate…</option>
               {candidates.map(c => (
-                <option value={c.id} selected={c.id === preselected}>{c.name}{c.jobTitle ? ` — ${c.jobTitle}` : ''}</option>
+                <option
+                  value={c.id}
+                  selected={c.id === preselected}
+                  data-stages={JSON.stringify(c.stages)}
+                  data-current-stage={c.currentStage}
+                >{c.name}{c.jobTitle ? ` — ${c.jobTitle}` : ''}</option>
               ))}
             </select>
           </div>
           <div>
-            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Interview Round <span style="color:#ee0000;">*</span></label>
-            <select name="round" class="select" required>
-              <option value="">Select round…</option>
-              <option value="L1 Technical">L1 Technical</option>
-              <option value="L2 Technical">L2 Technical</option>
-              <option value="Manager Round">Manager Round</option>
-              <option value="HR Round">HR Round</option>
-              <option value="Culture Fit">Culture Fit</option>
-              <option value="Final Round">Final Round</option>
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Pipeline Stage / Round <span style="color:#ee0000;">*</span></label>
+            <select id="stage-select" name="pipelineStage" class="select" required disabled>
+              <option value="">Select a candidate first…</option>
             </select>
+            <p style="font-size:12px;color:var(--fg-mute);margin:6px 0 0;">Scheduling a round for a stage ahead of the candidate's current one will automatically advance them there.</p>
           </div>
+          <input type="hidden" name="round" id="round-input" />
         </div>
       </div>
 
@@ -117,15 +134,47 @@ const today = new Date().toISOString().split('T')[0];
         <button type="submit" id="submit-btn" class="btn btn-primary">Schedule Interview</button>
       </div>
     </form>
+    )}
   </div>
 </AppLayout>
 
-<script>
+<script define:vars={{ preselected }}>
+  const candidateSelect = document.getElementById('candidate-select');
+  const stageSelect = document.getElementById('stage-select');
+  const roundInput = document.getElementById('round-input');
+
+  function populateStages() {
+    const opt = candidateSelect?.options[candidateSelect.selectedIndex];
+    const stagesJson = opt?.dataset.stages;
+    const currentStage = opt?.dataset.currentStage || '';
+    if (!stagesJson) {
+      stageSelect.innerHTML = '<option value="">Select a candidate first…</option>';
+      stageSelect.disabled = true;
+      roundInput.value = '';
+      return;
+    }
+    const stages = JSON.parse(stagesJson);
+    stageSelect.innerHTML = stages.map(s =>
+      `<option value="${s.key}" ${s.key === currentStage ? 'selected' : ''}>${s.label}</option>`
+    ).join('');
+    stageSelect.disabled = stages.length === 0;
+    syncRoundFromStage();
+  }
+
+  function syncRoundFromStage() {
+    const opt = stageSelect.options[stageSelect.selectedIndex];
+    roundInput.value = opt ? opt.textContent : '';
+  }
+
+  candidateSelect?.addEventListener('change', populateStages);
+  stageSelect?.addEventListener('change', syncRoundFromStage);
+  if (candidateSelect?.value) populateStages();
+
   document.getElementById('schedule-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const form = e.target as HTMLFormElement;
-    const btn = document.getElementById('submit-btn') as HTMLButtonElement;
-    const errorBanner = document.getElementById('error-banner') as HTMLElement;
+    const form = e.target;
+    const btn = document.getElementById('submit-btn');
+    const errorBanner = document.getElementById('error-banner');
     btn.disabled = true;
     btn.textContent = 'Scheduling…';
     errorBanner.style.display = 'none';

@@ -3,6 +3,7 @@ import AppLayout from "../../layouts/AppLayout.astro";
 import { connectDB } from "../../db/connection";
 import { Interview } from "../../db/models/Interview";
 import { Types } from "mongoose";
+import { findStage } from "../../lib/pipeline";
 
 const { id } = Astro.params;
 if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/interviews');
@@ -10,17 +11,22 @@ if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/interviews');
 await connectDB();
 const raw = await Interview.findById(id)
   .populate('candidateId', 'name')
-  .populate('jobId', 'title')
+  .populate('jobId', 'title pipeline')
   .lean();
 if (!raw) return Astro.redirect('/interviews');
+
+const job = raw.jobId as any;
+const stage = findStage(job?.pipeline || [], raw.pipelineStage);
 
 const interview = {
   ...raw,
   id: raw._id.toString(),
   candidateName: (raw.candidateId as any)?.name || 'Unknown',
   candidateId: (raw.candidateId as any)?._id?.toString() || '',
-  jobTitle: (raw.jobId as any)?.title || '',
-  jobId: (raw.jobId as any)?._id?.toString() || '',
+  jobTitle: job?.title || '',
+  jobId: job?._id?.toString() || '',
+  stageLabel: stage?.label || '',
+  stageColor: stage?.color || '#6b7280',
 };
 
 const isCompleted = interview.status === 'completed';
@@ -46,7 +52,10 @@ const isCompleted = interview.status === 'completed';
     <div class="avatar" style="width:44px;height:44px;font-size:16px;">{interview.candidateName.split(' ').map((n: string) => n[0]).join('')}</div>
     <div style="flex:1;min-width:0;">
       <div style="font-size:16px;font-weight:600;color:var(--fg);">{interview.candidateName}</div>
-      <div style="font-size:13px;color:var(--fg-body);">{interview.jobTitle} · {interview.round}</div>
+      <div style="font-size:13px;color:var(--fg-body);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        {interview.jobTitle} · {interview.round}
+        {interview.stageLabel && <span class="badge" style={`font-size:10px;background:${interview.stageColor}22;color:${interview.stageColor};border:1px solid ${interview.stageColor}55;`}>{interview.stageLabel}</span>}
+      </div>
     </div>
     <div style="display:flex;gap:24px;flex-wrap:wrap;">
       <div style="text-align:center;">

@@ -4,6 +4,7 @@ import { connectDB } from "../../../db/connection";
 import { Job } from "../../../db/models/Job";
 import { Team } from "../../../db/models/Team";
 import { Types } from "mongoose";
+import { sortedPipeline, STAGE_COLORS, STAGE_ICONS, getIconSvg } from "../../../lib/pipeline";
 
 const { id } = Astro.params;
 if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/jobs');
@@ -14,6 +15,9 @@ if (!rawJob) return Astro.redirect('/jobs');
 
 const job = { ...rawJob, id: rawJob._id.toString() };
 const managers = await Team.find({ role: 'Hiring Manager', status: 'active' }).lean();
+const pipeline = sortedPipeline(job.pipeline);
+const iconKeys = Object.keys(STAGE_ICONS);
+const iconSvgByKey = Object.fromEntries(iconKeys.map(k => [k, getIconSvg(k)]));
 ---
 
 <AppLayout title={`Edit · ${job.title}`} activeNav="jobs">
@@ -82,6 +86,18 @@ const managers = await Team.find({ role: 'Hiring Manager', status: 'active' }).l
         </div>
       </div>
 
+      <div class="card shadow-lvl-2">
+        <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 6px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Hiring Pipeline</h2>
+        <p style="font-size:12px;color:var(--fg-mute);margin:0 0 14px;">The exact stages candidates move through for this job — rename, recolor, reorder, add, or remove them. Candidates can only ever move forward through whatever stages remain.</p>
+        <div id="pipeline-rows" style="display:flex;flex-direction:column;gap:8px;"></div>
+        <button type="button" id="add-stage-btn" class="btn btn-secondary btn-sm" style="margin-top:12px;">+ Add Stage</button>
+        <div id="pipeline-error" style="display:none;margin-top:10px;padding:10px 12px;border-radius:6px;background:#fee2e2;color:#991b1b;font-size:12px;"></div>
+        <div id="pipeline-success" style="display:none;margin-top:10px;padding:10px 12px;border-radius:6px;background:#d1fae5;color:#065f46;font-size:12px;"></div>
+        <div style="display:flex;justify-content:flex-end;margin-top:14px;">
+          <button type="button" id="save-pipeline-btn" class="btn btn-primary btn-sm">Save Pipeline</button>
+        </div>
+      </div>
+
       <div style="display:flex;gap:10px;justify-content:space-between;padding-bottom:32px;flex-wrap:wrap;">
         <button type="button" id="delete-btn" class="btn btn-destructive btn-sm">Delete Job</button>
         <div style="display:flex;gap:10px;">
@@ -92,6 +108,129 @@ const managers = await Team.find({ role: 'Hiring Manager', status: 'active' }).l
     </form>
   </div>
 </AppLayout>
+
+<script define:vars={{ jobId: job.id, initialPipeline: pipeline, stageColors: STAGE_COLORS, iconKeys, iconSvgByKey }}>
+  const rowsEl = document.getElementById('pipeline-rows');
+  const errorEl = document.getElementById('pipeline-error');
+  const successEl = document.getElementById('pipeline-success');
+  let stages = (initialPipeline || []).map(s => ({ ...s }));
+  let seq = stages.length;
+
+  function swatchOptions(selected) {
+    return stageColors.map(c =>
+      `<option value="${c}" ${c === selected ? 'selected' : ''}>${c}</option>`
+    ).join('');
+  }
+  function iconOptions(selected) {
+    return iconKeys.map(k =>
+      `<option value="${k}" ${k === selected ? 'selected' : ''}>${k}</option>`
+    ).join('');
+  }
+
+  function renderRows() {
+    rowsEl.innerHTML = stages.map((s, i) => `
+      <div class="pipeline-row" data-idx="${i}" style="display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--border);border-radius:6px;">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--fg-mute);width:18px;text-align:center;">${i + 1}</span>
+        <span class="stage-icon-preview" style="display:inline-flex;color:${s.color};">${iconSvgByKey[s.icon] || iconSvgByKey.circle}</span>
+        <input type="text" class="input stage-label" value="${s.label.replace(/"/g, '&quot;')}" style="flex:1;height:32px;font-size:13px;" />
+        <span class="color-dot" style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${s.color};border:1px solid var(--border);flex-shrink:0;"></span>
+        <select class="select stage-color" style="width:90px;height:32px;font-size:12px;">${swatchOptions(s.color)}</select>
+        <select class="select stage-icon" style="width:96px;height:32px;font-size:12px;">${iconOptions(s.icon)}</select>
+        <button type="button" class="btn btn-ghost btn-sm move-up" ${i === 0 ? 'disabled' : ''} title="Move up">↑</button>
+        <button type="button" class="btn btn-ghost btn-sm move-down" ${i === stages.length - 1 ? 'disabled' : ''} title="Move down">↓</button>
+        <button type="button" class="btn btn-ghost btn-sm remove-stage" style="color:#ef4444;" ${stages.length <= 1 ? 'disabled' : ''} title="Remove stage">✕</button>
+      </div>
+    `).join('');
+
+    rowsEl.querySelectorAll('.pipeline-row').forEach(row => {
+      const idx = Number(row.dataset.idx);
+      row.querySelector('.stage-label').addEventListener('input', (e) => { stages[idx].label = e.target.value; });
+      row.querySelector('.stage-color').addEventListener('change', (e) => {
+        stages[idx].color = e.target.value;
+        row.querySelector('.color-dot').style.background = e.target.value;
+        row.querySelector('.stage-icon-preview').style.color = e.target.value;
+      });
+      row.querySelector('.stage-icon').addEventListener('change', (e) => {
+        stages[idx].icon = e.target.value;
+        row.querySelector('.stage-icon-preview').innerHTML = iconSvgByKey[e.target.value] || iconSvgByKey.circle;
+      });
+      row.querySelector('.move-up')?.addEventListener('click', () => {
+        if (idx === 0) return;
+        [stages[idx - 1], stages[idx]] = [stages[idx], stages[idx - 1]];
+        renderRows();
+      });
+      row.querySelector('.move-down')?.addEventListener('click', () => {
+        if (idx === stages.length - 1) return;
+        [stages[idx + 1], stages[idx]] = [stages[idx], stages[idx + 1]];
+        renderRows();
+      });
+      row.querySelector('.remove-stage')?.addEventListener('click', () => {
+        if (stages.length <= 1) return;
+        stages.splice(idx, 1);
+        renderRows();
+      });
+    });
+  }
+
+  function slugify(label) {
+    let base = label.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'stage';
+    let key = base, i = 2;
+    const taken = new Set(stages.map(s => s.key));
+    while (taken.has(key)) key = `${base}-${i++}`;
+    return key;
+  }
+
+  document.getElementById('add-stage-btn')?.addEventListener('click', () => {
+    seq++;
+    const color = stageColors[stages.length % stageColors.length];
+    const label = `New Stage ${seq}`;
+    stages.push({ key: slugify(label), label, color, icon: 'circle', order: stages.length });
+    renderRows();
+  });
+
+  document.getElementById('save-pipeline-btn')?.addEventListener('click', async () => {
+    errorEl.style.display = 'none';
+    successEl.style.display = 'none';
+
+    const payload = stages.map((s, i) => ({
+      key: s.key || slugify(s.label),
+      label: s.label.trim() || `Stage ${i + 1}`,
+      color: s.color,
+      icon: s.icon,
+      order: i,
+    }));
+
+    const btn = document.getElementById('save-pipeline-btn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    try {
+      const res = await fetch(`/api/jobs/${jobId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pipeline: payload }),
+      });
+      if (res.ok) {
+        const job = await res.json();
+        stages = (job.pipeline || []).map(s => ({ ...s }));
+        renderRows();
+        successEl.textContent = 'Pipeline saved.';
+        successEl.style.display = 'block';
+      } else {
+        const err = await res.json().catch(() => ({}));
+        errorEl.textContent = err.error || 'Failed to save pipeline.';
+        errorEl.style.display = 'block';
+      }
+    } catch {
+      errorEl.textContent = 'Network error. Please try again.';
+      errorEl.style.display = 'block';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Save Pipeline';
+    }
+  });
+
+  renderRows();
+</script>
 
 <script define:vars={{ jobId: job.id }}>
   document.getElementById('edit-form')?.addEventListener('submit', async (e) => {

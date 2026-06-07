@@ -5,6 +5,7 @@ import { Job } from "../../db/models/Job";
 import { Candidate } from "../../db/models/Candidate";
 import { Interview } from "../../db/models/Interview";
 import { Types } from "mongoose";
+import { sortedPipeline, bucketForCandidate, getValidNextStages, getIconSvg } from "../../lib/pipeline";
 
 const { id } = Astro.params;
 if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/jobs');
@@ -15,12 +16,17 @@ if (!rawJob) return Astro.redirect('/jobs');
 
 const job = { ...rawJob, id: rawJob._id.toString(), created: new Date(rawJob.createdAt).toISOString().split('T')[0] };
 
+const pipeline = sortedPipeline(job.pipeline);
+
 const rawCandidates = await Candidate.find({ jobId: id }).sort({ score: -1 }).lean();
 const jobCandidates = rawCandidates.map((c, i) => ({
   ...c,
   id: c._id.toString(),
   rank: i + 1,
   applied: new Date(c.createdAt).toISOString().split('T')[0],
+  stage: pipeline.find(s => s.key === c.currentStage),
+  bucket: bucketForCandidate(c, job.pipeline),
+  validStages: getValidNextStages(job.pipeline, c.currentStage),
 }));
 
 const rawInterviews = await Interview.find({ jobId: id })
@@ -34,20 +40,17 @@ const jobInterviews = rawInterviews.map(iv => ({
   candidateId: (iv.candidateId as any)?._id?.toString() || '',
 }));
 
-// Funnel for this job
-const funnelStages = [
-  { stage: 'Applied',     key: 'applied' },
-  { stage: 'Screened',    key: 'screening' },
-  { stage: 'Shortlisted', key: 'shortlisted' },
-  { stage: 'Interview',   key: 'interview' },
-  { stage: 'Hired',       key: 'hired' },
-];
+// Funnel reflects this job's own configurable pipeline — every stage it
+// actually has, in order, plus the orthogonal "Rejected" outcome.
 const totalForJob = jobCandidates.length || 1;
-const funnelData = funnelStages.map(s => ({
-  stage: s.stage,
-  count: jobCandidates.filter(c => c.status === s.key).length,
-  pct: Math.min(100, Math.round((jobCandidates.filter(c => c.status === s.key).length / totalForJob) * 100)),
-}));
+const funnelData = pipeline.map(stage => {
+  const count = jobCandidates.filter(c => c.currentStage === stage.key && !c.rejected).length;
+  return { stage: stage.label, color: stage.color, icon: stage.icon, count, pct: Math.round((count / totalForJob) * 100) };
+});
+const rejectedCount = jobCandidates.filter(c => c.rejected).length;
+
+const inProgressCount = jobCandidates.filter(c => c.bucket === 'In Progress').length;
+const hiredCount = jobCandidates.filter(c => c.bucket === 'Hired').length;
 
 const avgScore = jobCandidates.length ? Math.round(jobCandidates.reduce((s, c) => s + c.score, 0) / jobCandidates.length) : 0;
 const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.experience, 0) / jobCandidates.length).toFixed(1) : '0';
@@ -76,7 +79,8 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
   <!-- Stats -->
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px;">
     <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Applicants</div><div class="stat-value" style="font-size:22px;">{jobCandidates.length}</div></div>
-    <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Shortlisted</div><div class="stat-value" style="font-size:22px;">{jobCandidates.filter(c => c.status === 'shortlisted').length}</div></div>
+    <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">In Progress</div><div class="stat-value" style="font-size:22px;">{inProgressCount}</div></div>
+    <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Hired</div><div class="stat-value" style="font-size:22px;">{hiredCount}</div></div>
     <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Interviews</div><div class="stat-value" style="font-size:22px;">{jobInterviews.length}</div></div>
     <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Avg Score</div><div class="stat-value" style="font-size:22px;">{avgScore || '—'}</div></div>
   </div>
@@ -123,14 +127,26 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
           </div>
         </div>
         <div class="card shadow-lvl-2">
-          <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Hiring Funnel</h3>
-          {funnelData.map(row => (
+          <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Hiring Pipeline</h3>
+          {funnelData.length === 0 ? (
+            <p style="font-size:12px;color:var(--fg-mute);margin:0;">No pipeline configured for this job yet.</p>
+          ) : funnelData.map(row => (
             <div class="funnel-row" style="padding:6px 0;">
-              <span class="funnel-label" style="font-size:12px;width:90px;">{row.stage}</span>
-              <div class="funnel-track"><div class="funnel-fill" style={`width:${Math.max(row.pct, row.count > 0 ? 4 : 0)}%`}></div></div>
+              <span class="funnel-label" style="font-size:12px;width:90px;display:flex;align-items:center;gap:5px;">
+                <span set:html={getIconSvg(row.icon)} style={`color:${row.color};display:inline-flex;`} />
+                {row.stage}
+              </span>
+              <div class="funnel-track"><div class="funnel-fill" style={`width:${Math.max(row.pct, row.count > 0 ? 4 : 0)}%;background:${row.color};`}></div></div>
               <span class="funnel-count" style="font-size:12px;">{row.count}</span>
             </div>
           ))}
+          {rejectedCount > 0 && (
+            <div class="funnel-row" style="padding:6px 0;">
+              <span class="funnel-label" style="font-size:12px;width:90px;">Rejected</span>
+              <div class="funnel-track"><div class="funnel-fill" style={`width:${Math.max(Math.round(rejectedCount / totalForJob * 100), 4)}%;background:#ef4444;`}></div></div>
+              <span class="funnel-count" style="font-size:12px;">{rejectedCount}</span>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -153,7 +169,7 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
       <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
         <div class="table-container">
           <table>
-            <thead><tr><th>Rank</th><th>Candidate</th><th>Score</th><th>Experience</th><th>Skills Match</th><th>Education</th><th>Status</th><th>Recommendation</th><th></th></tr></thead>
+            <thead><tr><th>Rank</th><th>Candidate</th><th>Score</th><th>Experience</th><th>Skills Match</th><th>Education</th><th>Stage</th><th>Recommendation</th><th></th></tr></thead>
             <tbody>
               {jobCandidates.map(c => (
                 <tr>
@@ -177,14 +193,21 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
                   </td>
                   <td style="font-family:'JetBrains Mono',monospace;font-size:12px;">{c.educationMatch}%</td>
                   <td>
-                    <select class="select" style="width:120px;height:28px;font-size:12px;" data-cand-id={c.id} onchange="updateStatus(this)">
-                      {['applied','screening','shortlisted','interview','offered','hired','rejected'].map(s => (
-                        <option value={s} selected={c.status === s}>{s}</option>
-                      ))}
-                    </select>
+                    {c.rejected ? (
+                      <span class="badge badge-error">Rejected</span>
+                    ) : (
+                      <select class="select" style="width:130px;height:28px;font-size:12px;" data-cand-id={c.id} onchange="updateStage(this)">
+                        {c.validStages.map(s => (
+                          <option value={s.key} selected={c.currentStage === s.key}>{s.label}</option>
+                        ))}
+                      </select>
+                    )}
                   </td>
                   <td style="font-size:12px;color:var(--fg-body);">{c.recommendation}</td>
-                  <td><a href={`/candidates/${c.id}`} class="btn btn-ghost btn-sm">Profile →</a></td>
+                  <td style="display:flex;gap:6px;">
+                    <a href={`/candidates/${c.id}`} class="btn btn-ghost btn-sm">Profile →</a>
+                    {!c.rejected && <button class="btn btn-ghost btn-sm" style="color:#ef4444;" data-cand-id={c.id} data-cand-name={c.name} onclick="rejectCandidate(this)">Reject</button>}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -231,8 +254,8 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;">
       <div class="card shadow-lvl-2"><div class="stat-label">Avg Score</div><div class="stat-value" style="font-size:22px;">{avgScore || '—'}</div></div>
       <div class="card shadow-lvl-2"><div class="stat-label">Avg Experience</div><div class="stat-value" style="font-size:22px;">{avgExp} <span style="font-size:14px;font-weight:400;">yrs</span></div></div>
-      <div class="card shadow-lvl-2"><div class="stat-label">Shortlist Rate</div><div class="stat-value" style="font-size:22px;">{jobCandidates.length ? Math.round(jobCandidates.filter(c => c.status === 'shortlisted').length / jobCandidates.length * 100) : 0}%</div></div>
-      <div class="card shadow-lvl-2"><div class="stat-label">Interview Rate</div><div class="stat-value" style="font-size:22px;">{jobCandidates.length ? Math.round(jobCandidates.filter(c => c.status === 'interview').length / jobCandidates.length * 100) : 0}%</div></div>
+      <div class="card shadow-lvl-2"><div class="stat-label">Hire Rate</div><div class="stat-value" style="font-size:22px;">{jobCandidates.length ? Math.round(hiredCount / jobCandidates.length * 100) : 0}%</div></div>
+      <div class="card shadow-lvl-2"><div class="stat-label">Rejection Rate</div><div class="stat-value" style="font-size:22px;">{jobCandidates.length ? Math.round(rejectedCount / jobCandidates.length * 100) : 0}%</div></div>
     </div>
   </div>
 
@@ -282,21 +305,39 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
     });
   });
 
-  // Status update
-  async function updateStatus(sel) {
+  // Stage transitions
+  async function updateStage(sel) {
     const id = sel.dataset.candId;
-    const status = sel.value;
+    const currentStage = sel.value;
     const res = await fetch(`/api/candidates/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ currentStage }),
     });
     if (!res.ok) {
-      alert('Failed to update status');
-      window.location.reload();
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || 'Failed to update stage');
     }
+    window.location.reload();
   }
-  window.updateStatus = updateStatus;
+  window.updateStage = updateStage;
+
+  async function rejectCandidate(btn) {
+    const id = btn.dataset.candId;
+    const name = btn.dataset.candName;
+    if (!confirm(`Reject ${name}? This cannot be undone.`)) return;
+    const res = await fetch(`/api/candidates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rejected: true }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || 'Failed to reject candidate');
+    }
+    window.location.reload();
+  }
+  window.rejectCandidate = rejectCandidate;
 
   // Upload modal
   const modal = document.getElementById('upload-modal');

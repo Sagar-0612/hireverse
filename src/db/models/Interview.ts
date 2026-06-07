@@ -3,6 +3,7 @@ import mongoose, { Schema, type Document, type Types } from 'mongoose';
 export interface IInterview extends Document {
   candidateId: Types.ObjectId;
   jobId: Types.ObjectId;
+  pipelineStage: string;
   round: string;
   interviewer: string;
   date: string;
@@ -24,6 +25,7 @@ const InterviewSchema = new Schema<IInterview>(
   {
     candidateId:       { type: Schema.Types.ObjectId, ref: 'Candidate', required: true },
     jobId:             { type: Schema.Types.ObjectId, ref: 'Job', required: true },
+    pipelineStage:     { type: String, default: '' },
     round:             { type: String, default: 'L1 Technical' },
     interviewer:       { type: String, default: '' },
     date:              { type: String, required: true },

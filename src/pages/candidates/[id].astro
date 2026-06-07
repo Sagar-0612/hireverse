@@ -3,23 +3,29 @@ import AppLayout from "../../layouts/AppLayout.astro";
 import { connectDB } from "../../db/connection";
 import { Candidate } from "../../db/models/Candidate";
 import { Types } from "mongoose";
+import { sortedPipeline, getValidNextStages, findStage, getIconSvg } from "../../lib/pipeline";
 
 const { id } = Astro.params;
 if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/candidates');
 
 await connectDB();
-const raw = await Candidate.findById(id).populate('jobId', 'title department location requiredSkills education level').lean();
+const raw = await Candidate.findById(id).populate('jobId', 'title department location requiredSkills education level pipeline').lean();
 if (!raw) return Astro.redirect('/candidates');
+
+const job = raw.jobId as any;
+const pipeline = sortedPipeline(job?.pipeline || []);
+const currentStage = findStage(pipeline, raw.currentStage);
+const validStages = getValidNextStages(pipeline, raw.currentStage);
 
 const candidate = {
   ...raw,
   id: raw._id.toString(),
-  jobId: (raw.jobId as any)?._id?.toString() || '',
-  jobTitle: (raw.jobId as any)?.title || '',
-  jobDept: (raw.jobId as any)?.department || '',
-  jobSkills: (raw.jobId as any)?.requiredSkills || [],
-  jobEducation: (raw.jobId as any)?.education || '',
-  jobLevel: (raw.jobId as any)?.level || '',
+  jobId: job?._id?.toString() || '',
+  jobTitle: job?.title || '',
+  jobDept: job?.department || '',
+  jobSkills: job?.requiredSkills || [],
+  jobEducation: job?.education || '',
+  jobLevel: job?.level || '',
   applied: new Date(raw.createdAt).toISOString().split('T')[0],
 };
 
@@ -41,7 +47,13 @@ const skillScores = skillsToShow.map((skill: string) => {
         <div class="avatar" style="width:44px;height:44px;font-size:16px;">{candidate.name.split(' ').map((n: string) => n[0]).join('')}</div>
         <div>
           <h1 style="font-size:22px;font-weight:600;color:var(--fg);letter-spacing:-0.4px;margin:0;">{candidate.name}</h1>
-          <div style="font-size:13px;color:var(--fg-mute);margin-top:2px;">{candidate.location || 'Location not set'} · Applied {candidate.applied}</div>
+          <div style="font-size:13px;color:var(--fg-mute);margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <span>{candidate.location}</span>
+            {candidate.locationConfidence && candidate.locationConfidence !== 'none' && (
+              <span class={`badge ${candidate.locationConfidence === 'high' ? 'badge-success' : candidate.locationConfidence === 'medium' ? 'badge-info' : 'badge-neutral'}`} style="font-size:10px;padding:1px 6px;">{candidate.locationConfidence} confidence</span>
+            )}
+            <span>· Applied {candidate.applied}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -148,12 +160,16 @@ const skillScores = skillsToShow.map((skill: string) => {
         <div style="display:flex;flex-direction:column;gap:10px;font-size:13px;">
           {candidate.jobTitle && <div style="display:flex;justify-content:space-between;"><span style="color:var(--fg-mute);">Job</span><span style="color:var(--fg);font-weight:500;text-align:right;max-width:160px;">{candidate.jobTitle}</span></div>}
           <div style="display:flex;justify-content:space-between;align-items:center;">
-            <span style="color:var(--fg-mute);">Status</span>
-            <select id="status-select" class="select" style="width:130px;height:28px;font-size:12px;">
-              {['applied','screening','shortlisted','interview','offered','hired','rejected'].map(s => (
-                <option value={s} selected={candidate.status === s}>{s}</option>
-              ))}
-            </select>
+            <span style="color:var(--fg-mute);">Stage</span>
+            {candidate.rejected ? (
+              <span class="badge badge-error">Rejected</span>
+            ) : (
+              <select id="stage-select" class="select" style="width:140px;height:28px;font-size:12px;">
+                {validStages.map(s => (
+                  <option value={s.key} selected={candidate.currentStage === s.key}>{s.label}</option>
+                ))}
+              </select>
+            )}
           </div>
           <div style="display:flex;justify-content:space-between;"><span style="color:var(--fg-mute);">Applied</span><span style="color:var(--fg);font-family:'JetBrains Mono',monospace;">{candidate.applied}</span></div>
         </div>
@@ -164,6 +180,7 @@ const skillScores = skillsToShow.map((skill: string) => {
         <div style="display:flex;flex-direction:column;gap:8px;">
           <a href={`/candidates/${candidate.id}/journey`} class="btn btn-primary" style="width:100%;border-radius:6px;">View Journey</a>
           <a href={`/interviews/schedule?candidate=${candidate.id}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">Schedule Interview</a>
+          {!candidate.rejected && <button id="reject-btn" class="btn btn-ghost" style="width:100%;color:#ef4444;">Reject Candidate</button>}
           <button id="delete-btn" class="btn btn-ghost" style="width:100%;color:#ee0000;">Delete Candidate</button>
         </div>
       </div>
@@ -178,14 +195,33 @@ const skillScores = skillsToShow.map((skill: string) => {
 </AppLayout>
 
 <script define:vars={{ candidateId: candidate.id }}>
-  document.getElementById('status-select')?.addEventListener('change', async (e) => {
-    const status = e.target.value;
+  document.getElementById('stage-select')?.addEventListener('change', async (e) => {
+    const currentStage = e.target.value;
+    const notes = prompt('Add an optional note about this move (visible on the candidate journey):') || '';
     const res = await fetch(`/api/candidates/${candidateId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ currentStage, notes }),
     });
-    if (!res.ok) { alert('Failed to update status'); window.location.reload(); }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || 'Failed to update stage');
+    }
+    window.location.reload();
+  });
+
+  document.getElementById('reject-btn')?.addEventListener('click', async () => {
+    if (!confirm('Reject this candidate? This is a terminal action and cannot be undone.')) return;
+    const res = await fetch(`/api/candidates/${candidateId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rejected: true }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || 'Failed to reject candidate');
+    }
+    window.location.reload();
   });
 
   document.getElementById('save-notes')?.addEventListener('click', async () => {

@@ -9,11 +9,14 @@ interface JobLike {
   level?: string;
 }
 
+export type LocationConfidence = 'high' | 'medium' | 'low' | 'none';
+
 export interface ResumeAnalysis {
   name: string;
   email: string;
   phone: string;
   location: string;
+  locationConfidence: LocationConfidence;
   experience: number;
   skills: string[];
   skillsMatch: number;
@@ -98,17 +101,48 @@ function extractPhone(text: string): string {
   return '';
 }
 
-const LOCATION_LINE = /^[A-Z][a-zA-Z.\s]{1,30},\s?[A-Z]{2}\b|^[A-Z][a-zA-Z.\s]{1,30},\s?[A-Z][a-zA-Z\s]{2,20}$/;
+// "City, ST" with a clean two-letter state/province code — the cleanest, most
+// unambiguous signal a resume gives for location.
+const LOCATION_STRICT = /^[A-Z][a-zA-Z.\s]{1,30},\s?[A-Z]{2}$/;
+// "City, Country" / "City, Region" — still a comma-separated place, but the
+// second part isn't a tidy two-letter code so it's read with less certainty.
+const LOCATION_LOOSE = /^[A-Z][a-zA-Z.\s]{1,30},\s?[A-Z][a-zA-Z\s]{2,24}$/;
+const LOCATION_LABELED = /(?:location|address|based\s+in|residing\s+in|city)\s*[:\-]\s*([A-Z][a-zA-Z,.\s]{2,40})/i;
+// Bare single/double-word capitalized line — could be a city, could easily be
+// a job title or section header, hence the lowest confidence tier.
+const LOCATION_BARE = /^[A-Z][a-zA-Z.]{2,20}(?:\s[A-Z][a-zA-Z.]{2,20})?$/;
+const TITLE_NOISE = /engineer|manager|developer|designer|analyst|specialist|lead|director|intern|consultant|architect|founder|officer|scientist|administrator|coordinator|executive/i;
 
-function extractLocation(text: string): string {
+function extractLocation(text: string): { location: string; confidence: LocationConfidence } {
   const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(0, 12);
+  const clean = (l: string) => l.replace(/[|•].*$/, '').trim();
+  const isNoisy = (l: string) => /@|\d{4,}|https?:/i.test(l);
+
   for (const line of lines) {
-    if (/@|\d{4,}|https?:/i.test(line)) continue;
-    if (line.length < 60 && LOCATION_LINE.test(line)) {
-      return line.replace(/[|•].*$/, '').trim();
-    }
+    if (isNoisy(line) || line.length >= 60) continue;
+    const c = clean(line);
+    if (LOCATION_STRICT.test(c)) return { location: c, confidence: 'high' };
   }
-  return '';
+
+  for (const line of lines) {
+    if (isNoisy(line) || line.length >= 60) continue;
+    const c = clean(line);
+    if (LOCATION_LOOSE.test(c)) return { location: c, confidence: 'medium' };
+  }
+
+  const labeled = text.match(LOCATION_LABELED);
+  if (labeled) {
+    const value = clean(labeled[1].split(/[\n\r]/)[0]);
+    if (value.length > 1 && value.length < 60) return { location: value, confidence: 'medium' };
+  }
+
+  for (const line of lines.slice(0, 6)) {
+    if (isNoisy(line) || line.length >= 35 || TITLE_NOISE.test(line)) continue;
+    const c = clean(line);
+    if (LOCATION_BARE.test(c)) return { location: c, confidence: 'low' };
+  }
+
+  return { location: 'Location Not Found', confidence: 'none' };
 }
 
 const DAY = '\\d{1,2}\\s+';
@@ -228,7 +262,7 @@ export function analyzeResume(text: string, filename: string, job: JobLike): Res
   const name = extractName(cleaned, filename);
   const email = extractEmail(cleaned);
   const phone = extractPhone(cleaned);
-  const location = extractLocation(cleaned);
+  const { location, confidence: locationConfidence } = extractLocation(cleaned);
   const experience = extractExperience(cleaned);
 
   const requiredSkills = job.requiredSkills || [];
@@ -253,6 +287,7 @@ export function analyzeResume(text: string, filename: string, job: JobLike): Res
     email,
     phone,
     location,
+    locationConfidence,
     experience,
     skills,
     skillsMatch,

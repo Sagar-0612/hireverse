@@ -1,8 +1,5 @@
 ---
 import "../styles/global.css";
-import { connectDB } from "../db/connection";
-import { Job } from "../db/models/Job";
-import { seedDatabase } from "../db/seed";
 
 export interface Props {
   title: string;
@@ -10,13 +7,6 @@ export interface Props {
 }
 
 const { title, activeNav = "" } = Astro.props;
-
-// Auto-seed on first request if DB is empty
-try {
-  await connectDB();
-  const count = await Job.countDocuments();
-  if (count === 0) await seedDatabase();
-} catch (_) { /* DB not available – still render */ }
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", id: "dashboard", icon: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>` },

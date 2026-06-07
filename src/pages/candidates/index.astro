@@ -3,27 +3,40 @@ import AppLayout from "../../layouts/AppLayout.astro";
 import { connectDB } from "../../db/connection";
 import { Candidate } from "../../db/models/Candidate";
 import { Job } from "../../db/models/Job";
+import { findStage } from "../../lib/pipeline";
 
 await connectDB();
 const rawCandidates = await Candidate.find()
-  .populate('jobId', 'title department')
+  .populate('jobId', 'title department pipeline')
   .sort({ score: -1 })
   .lean();
 
-const candidates = rawCandidates.map((c, i) => ({
-  id: c._id.toString(),
-  rank: i + 1,
-  name: c.name,
-  location: c.location,
-  score: c.score,
-  experience: c.experience,
-  skillsMatch: c.skillsMatch,
-  educationMatch: c.educationMatch,
-  status: c.status,
-  recommendation: c.recommendation,
-  jobId: (c.jobId as any)?._id?.toString() || '',
-  jobTitle: (c.jobId as any)?.title || '',
-}));
+const candidates = rawCandidates.map((c, i) => {
+  const job = c.jobId as any;
+  const stage = findStage(job?.pipeline || [], c.currentStage);
+  const stageLabel = c.rejected ? 'Rejected' : (stage?.label || c.currentStage);
+  const stageColor = c.rejected ? '#ef4444' : (stage?.color || '#6b7280');
+  return {
+    id: c._id.toString(),
+    rank: i + 1,
+    name: c.name,
+    location: c.location,
+    locationConfidence: c.locationConfidence,
+    score: c.score,
+    experience: c.experience,
+    skillsMatch: c.skillsMatch,
+    educationMatch: c.educationMatch,
+    stageLabel,
+    stageColor,
+    recommendation: c.recommendation,
+    jobId: job?._id?.toString() || '',
+    jobTitle: job?.title || '',
+  };
+});
+
+// Filter options reflect only stage labels actually present across loaded
+// candidates (plus the orthogonal "Rejected" outcome) — never a fixed enum.
+const stageOptions = Array.from(new Set(candidates.map(c => c.stageLabel))).sort((a, b) => a.localeCompare(b));
 
 const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } }).lean();
 ---
@@ -50,9 +63,9 @@ const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } 
       <option value="">All Jobs</option>
       {activeJobs.map(j => <option value={j._id.toString()}>{j.title}</option>)}
     </select>
-    <select id="status-filter" class="select" style="width:150px;">
-      <option value="">All Status</option>
-      {['applied','screening','shortlisted','interview','offered','hired','rejected'].map(s => <option value={s}>{s}</option>)}
+    <select id="stage-filter" class="select" style="width:160px;">
+      <option value="">All Stages</option>
+      {stageOptions.map(s => <option value={s}>{s}</option>)}
     </select>
     <select id="sort-select" class="select" style="width:170px;">
       <option value="score-desc">Sort: Highest Score</option>
@@ -73,14 +86,14 @@ const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } 
         </thead>
         <tbody>
           {candidates.map(c => (
-            <tr data-name={c.name.toLowerCase()} data-job={c.jobId} data-status={c.status} data-score={c.score} data-exp={c.experience}>
+            <tr data-name={c.name.toLowerCase()} data-job={c.jobId} data-stage={c.stageLabel} data-score={c.score} data-exp={c.experience}>
               <td><span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--fg-mute);" class="rank-cell">#{c.rank}</span></td>
               <td>
                 <div style="display:flex;align-items:center;gap:10px;">
                   <div class="avatar" style="width:30px;height:30px;font-size:11px;">{c.name.split(' ').map((n: string) => n[0]).join('')}</div>
                   <div>
                     <a href={`/candidates/${c.id}`} style="font-size:13px;font-weight:500;color:var(--fg);text-decoration:none;">{c.name}</a>
-                    <div style="font-size:11px;color:var(--fg-mute);">{c.location || '—'}</div>
+                    <div style="font-size:11px;color:var(--fg-mute);">{c.location}{c.locationConfidence === 'low' && c.location !== 'Location Not Found' ? ' (low confidence)' : ''}</div>
                   </div>
                 </div>
               </td>
@@ -94,7 +107,7 @@ const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } 
                 </div>
               </td>
               <td style="font-family:'JetBrains Mono',monospace;font-size:12px;">{c.educationMatch}%</td>
-              <td><span class={`badge ${c.status === 'shortlisted' ? 'badge-success' : c.status === 'interview' ? 'badge-info' : c.status === 'screening' ? 'badge-violet' : c.status === 'hired' ? 'badge-success' : c.status === 'rejected' ? 'badge-error' : 'badge-neutral'}`}>{c.status}</span></td>
+              <td><span class="badge" style={`background:${c.stageColor}22;color:${c.stageColor};border:1px solid ${c.stageColor}55;`}>{c.stageLabel}</span></td>
               <td style="font-size:12px;color:var(--fg-body);max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{c.recommendation}</td>
               <td><a href={`/candidates/${c.id}`} class="btn btn-ghost btn-sm">Profile →</a></td>
             </tr>
@@ -153,7 +166,7 @@ const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } 
   // Filter / sort
   const searchInput = document.getElementById('cand-search');
   const jobFilter = document.getElementById('job-filter');
-  const statusFilter = document.getElementById('status-filter');
+  const stageFilter = document.getElementById('stage-filter');
   const sortSelect = document.getElementById('sort-select');
   const countEl = document.getElementById('cand-count');
   const tbody = document.querySelector('#cand-table tbody');
@@ -162,13 +175,13 @@ const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } 
     const rows = Array.from(document.querySelectorAll('#cand-table tbody tr'));
     const q = searchInput.value.toLowerCase();
     const job = jobFilter.value;
-    const status = statusFilter.value;
+    const stage = stageFilter.value;
     const sort = sortSelect.value;
 
     let visible = rows.filter(row =>
       (!q || (row.dataset.name || '').includes(q)) &&
       (!job || row.dataset.job === job) &&
-      (!status || row.dataset.status === status)
+      (!stage || row.dataset.stage === stage)
     );
 
     visible.sort((a, b) => {
@@ -191,7 +204,7 @@ const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } 
 
   searchInput?.addEventListener('input', filterRows);
   jobFilter?.addEventListener('change', filterRows);
-  statusFilter?.addEventListener('change', filterRows);
+  stageFilter?.addEventListener('change', filterRows);
   sortSelect?.addEventListener('change', filterRows);
 
   // Upload modal

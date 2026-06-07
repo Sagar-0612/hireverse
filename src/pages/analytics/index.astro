@@ -4,29 +4,46 @@ import { connectDB } from "../../db/connection";
 import { Candidate } from "../../db/models/Candidate";
 import { Job } from "../../db/models/Job";
 import { Interview } from "../../db/models/Interview";
+import { ActivityLog } from "../../db/models/ActivityLog";
+import { bucketForCandidate, getIconSvg, type FunnelBucket } from "../../lib/pipeline";
 
 await connectDB();
 
-const [totalCandidates, totalJobs, totalInterviews] = await Promise.all([
-  Candidate.countDocuments(),
+const [totalJobsCount, totalInterviews] = await Promise.all([
   Job.countDocuments({ status: { $in: ['active', 'interviewing'] } }),
   Interview.countDocuments(),
 ]);
 
-// Funnel
-const funnelRaw = await Candidate.aggregate([
-  { $group: { _id: '$status', count: { $sum: 1 } } },
-]);
-const statusOrder = ['applied','screening','shortlisted','interview','offered','hired'];
-const funnelMap = Object.fromEntries(funnelRaw.map(r => [r._id, r.count]));
-const maxCount = Math.max(...statusOrder.map(s => funnelMap[s] || 0), 1);
-const funnelData = statusOrder.map(s => ({
-  stage: s.charAt(0).toUpperCase() + s.slice(1),
-  count: funnelMap[s] || 0,
-  pct: Math.round(((funnelMap[s] || 0) / maxCount) * 100),
+// Pull every candidate with its parent job's pipeline so we can bucket by
+// relative position in *that job's own* pipeline — the only cross-job-safe way
+// to build a funnel when each job defines totally different stages.
+const allCandidates = await Candidate.find({}, 'jobId currentStage rejected rejectedAt stageHistory createdAt updatedAt')
+  .populate('jobId', 'pipeline')
+  .lean();
+
+const bucketCounts: Record<FunnelBucket, number> = { Applied: 0, 'In Progress': 0, Hired: 0, Rejected: 0 };
+const hiredCandidates: typeof allCandidates = [];
+for (const c of allCandidates) {
+  const pipeline = (c.jobId as any)?.pipeline || [];
+  const bucket = bucketForCandidate(c, pipeline);
+  bucketCounts[bucket]++;
+  if (bucket === 'Hired') hiredCandidates.push(c);
+}
+
+const totalCandidates = allCandidates.length;
+const maxBucketCount = Math.max(...Object.values(bucketCounts), 1);
+const funnelOrder: FunnelBucket[] = ['Applied', 'In Progress', 'Hired', 'Rejected'];
+const funnelData = funnelOrder.map(stage => ({
+  stage,
+  count: bucketCounts[stage],
+  pct: Math.round((bucketCounts[stage] / maxBucketCount) * 100),
 }));
 
-// Monthly trends (last 6 months)
+const hiredCount = hiredCandidates.length;
+const conversionRate = totalCandidates ? ((hiredCount / totalCandidates) * 100).toFixed(1) : '0.0';
+
+// Monthly trends (last 6 months) — applications from createdAt, hires from each
+// hired candidate's last real stageHistory transition (or updatedAt as fallback).
 const now = new Date();
 const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
 const monthlyRaw = await Candidate.aggregate([
@@ -35,11 +52,24 @@ const monthlyRaw = await Candidate.aggregate([
   { $sort: { '_id.year': 1, '_id.month': 1 } },
 ]);
 const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const monthlyTrends = monthlyRaw.map(r => ({
-  month: monthNames[r._id.month - 1],
-  applications: r.count,
-  hires: Math.floor(r.count * 0.05),
-}));
+
+const hiredByMonth = new Map<string, number>();
+for (const c of hiredCandidates) {
+  const hist = c.stageHistory || [];
+  const at = new Date(hist.length ? hist[hist.length - 1].movedAt : c.updatedAt);
+  if (at < sixMonthsAgo) continue;
+  const k = `${at.getFullYear()}-${at.getMonth() + 1}`;
+  hiredByMonth.set(k, (hiredByMonth.get(k) || 0) + 1);
+}
+
+const monthlyTrends = [];
+for (let i = 5; i >= 0; i--) {
+  const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+  const yr = d.getFullYear(); const mo = d.getMonth() + 1;
+  const apps = monthlyRaw.find((x: any) => x._id.year === yr && x._id.month === mo)?.count || 0;
+  const hires = hiredByMonth.get(`${yr}-${mo}`) || 0;
+  monthlyTrends.push({ month: monthNames[mo - 1], applications: apps, hires });
+}
 
 // Top jobs by candidates
 const topJobsRaw = await Candidate.aggregate([
@@ -57,8 +87,14 @@ const scoreAgg = await Interview.aggregate([
 ]);
 const avgScore = scoreAgg.length ? Math.round(scoreAgg[0].avg) : 0;
 
-const hired = funnelMap['hired'] || 0;
-const conversionRate = totalCandidates ? ((hired / totalCandidates) * 100).toFixed(1) : '0.0';
+// Recent activity — sourced directly from the real, persisted audit trail.
+const recentLogs = await ActivityLog.find().sort({ createdAt: -1 }).limit(8).lean();
+const ACTIVITY_ICON: Record<string, string> = { job: 'briefcase', candidate: 'user', interview: 'calendar', stage: 'flag', team: 'user' };
+const recentActivity = recentLogs.map(l => ({
+  text: l.message,
+  time: new Date(l.createdAt).toLocaleDateString(),
+  icon: ACTIVITY_ICON[l.type] || 'circle',
+}));
 ---
 
 <AppLayout title="Analytics" activeNav="analytics">
@@ -78,7 +114,7 @@ const conversionRate = totalCandidates ? ((hired / totalCandidates) * 100).toFix
     </div>
     <div class="stat-card shadow-lvl-2">
       <div class="stat-label">Active Jobs</div>
-      <div class="stat-value">{totalJobs}</div>
+      <div class="stat-value">{totalJobsCount}</div>
     </div>
     <div class="stat-card shadow-lvl-2">
       <div class="stat-label">Hiring Conversion</div>
@@ -100,13 +136,17 @@ const conversionRate = totalCandidates ? ((hired / totalCandidates) * 100).toFix
         <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0;">Applicant Funnel</h2>
         <span class="badge badge-neutral" style="font-size:11px;font-family:'JetBrains Mono',monospace;">All Jobs</span>
       </div>
-      {funnelData.map(row => (
-        <div class="funnel-row">
-          <span class="funnel-label">{row.stage}</span>
-          <div class="funnel-track"><div class="funnel-fill" style={`width:${row.pct}%`}></div></div>
-          <span class="funnel-count">{row.count}</span>
-        </div>
-      ))}
+      {totalCandidates === 0 ? (
+        <div class="empty-state" style="padding:32px 0;">No candidates yet</div>
+      ) : (
+        funnelData.map(row => (
+          <div class="funnel-row">
+            <span class="funnel-label">{row.stage}</span>
+            <div class="funnel-track"><div class="funnel-fill" style={`width:${Math.max(row.pct, row.count > 0 ? 4 : 0)}%`}></div></div>
+            <span class="funnel-count">{row.count}</span>
+          </div>
+        ))
+      )}
     </div>
 
     <div class="card shadow-lvl-2">
@@ -114,17 +154,20 @@ const conversionRate = totalCandidates ? ((hired / totalCandidates) * 100).toFix
         <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0;">Monthly Trends</h2>
         <div style="display:flex;gap:12px;font-size:12px;color:var(--fg-mute);">
           <span style="display:flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:2px;background:var(--fg);display:inline-block;opacity:0.75;"></span>Applications</span>
+          <span style="display:flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:2px;background:#22c55e;display:inline-block;opacity:0.85;"></span>Hires</span>
         </div>
       </div>
-      {monthlyTrends.length > 0 ? (
+      {monthlyTrends.some(m => m.applications > 0 || m.hires > 0) ? (
         <div style="display:flex;gap:8px;align-items:flex-end;height:140px;">
           {monthlyTrends.map(m => {
-            const maxApps = Math.max(...monthlyTrends.map(x => x.applications), 1);
-            const appH = Math.round((m.applications / maxApps) * 120);
+            const maxVal = Math.max(...monthlyTrends.map(x => Math.max(x.applications, x.hires)), 1);
+            const appH = Math.round((m.applications / maxVal) * 120);
+            const hireH = Math.round((m.hires / maxVal) * 120);
             return (
               <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;">
                 <div style="width:100%;display:flex;gap:2px;align-items:flex-end;height:124px;">
-                  <div style={`flex:1;height:${Math.max(appH,4)}px;background:var(--fg);border-radius:3px 3px 0 0;opacity:0.75;`}></div>
+                  <div style={`flex:1;height:${Math.max(appH,m.applications > 0 ? 4 : 0)}px;background:var(--fg);border-radius:3px 3px 0 0;opacity:0.75;`}></div>
+                  <div style={`flex:1;height:${Math.max(hireH,m.hires > 0 ? 4 : 0)}px;background:#22c55e;border-radius:3px 3px 0 0;opacity:0.85;`}></div>
                 </div>
                 <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;">{m.month}</div>
               </div>
@@ -137,7 +180,7 @@ const conversionRate = totalCandidates ? ((hired / totalCandidates) * 100).toFix
     </div>
   </div>
 
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
     <div class="card shadow-lvl-2">
       <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0 0 20px;">Top Jobs by Applications</h2>
       {topJobsRaw.length > 0 ? (
@@ -167,18 +210,39 @@ const conversionRate = totalCandidates ? ((hired / totalCandidates) * 100).toFix
 
     <div class="card shadow-lvl-2">
       <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0 0 20px;">Pipeline Summary</h2>
-      <div style="display:flex;flex-direction:column;gap:10px;">
-        {funnelData.map(row => (
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
-            <span style="font-size:13px;color:var(--fg-body);">{row.stage}</span>
-            <span style="font-size:15px;font-weight:600;color:var(--fg);font-family:'JetBrains Mono',monospace;">{row.count}</span>
+      {totalCandidates === 0 ? (
+        <div class="empty-state" style="padding:32px 0;">No candidates yet</div>
+      ) : (
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          {funnelData.map((row, idx) => (
+            <div style={`display:flex;align-items:center;justify-content:space-between;padding:8px 0;${idx < funnelData.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}`}>
+              <span style="font-size:13px;color:var(--fg-body);">{row.stage}</span>
+              <span style="font-size:15px;font-weight:600;color:var(--fg);font-family:'JetBrains Mono',monospace;">{row.count}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  </div>
+
+  <div class="card shadow-lvl-2">
+    <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0 0 16px;">Recent Activity</h2>
+    {recentActivity.length === 0 ? (
+      <div class="empty-state" style="padding:32px 0;">No recent activity.</div>
+    ) : (
+      <div style="display:flex;flex-direction:column;">
+        {recentActivity.map((act, idx) => (
+          <div style={`display:flex;gap:12px;padding:10px 0;${idx < recentActivity.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}`}>
+            <div style="width:28px;height:28px;border-radius:6px;background:var(--bg-soft-2);display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--fg-mute);">
+              <span set:html={getIconSvg(act.icon)} style="display:inline-flex;width:13px;height:13px;" />
+            </div>
+            <div>
+              <div style="font-size:13px;color:var(--fg-body);line-height:1.4;">{act.text}</div>
+              <div style="font-size:11px;color:var(--fg-mute);margin-top:2px;font-family:'JetBrains Mono',monospace;">{act.time}</div>
+            </div>
           </div>
         ))}
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;">
-          <span style="font-size:13px;color:var(--fg-body);">Rejected</span>
-          <span style="font-size:15px;font-weight:600;color:var(--fg);font-family:'JetBrains Mono',monospace;">{funnelMap['rejected'] || 0}</span>
-        </div>
       </div>
-    </div>
+    )}
   </div>
 </AppLayout>

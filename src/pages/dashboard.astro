@@ -4,37 +4,44 @@ import { connectDB } from "../db/connection";
 import { Job } from "../db/models/Job";
 import { Candidate } from "../db/models/Candidate";
 import { Interview } from "../db/models/Interview";
+import { ActivityLog } from "../db/models/ActivityLog";
+import { bucketForCandidate, getIconSvg, type FunnelBucket } from "../lib/pipeline";
 
 await connectDB();
 
-const [totalJobs, activeCandidates, scheduledCount, hiredCount, totalCandidates] = await Promise.all([
-  Job.countDocuments(),
-  Candidate.countDocuments({ status: { $ne: 'rejected' } }),
-  Interview.countDocuments({ status: 'scheduled' }),
-  Candidate.countDocuments({ status: 'hired' }),
-  Candidate.countDocuments(),
-]);
+// Pull every candidate with its parent job's pipeline so we can bucket by
+// relative position in *that job's own* pipeline — the only way to build a
+// cross-job funnel when each job can define totally different stages.
+const allCandidates = await Candidate.find({}, 'jobId currentStage rejected rejectedAt stageHistory createdAt updatedAt')
+  .populate('jobId', 'pipeline')
+  .lean();
 
+const bucketCounts: Record<FunnelBucket, number> = { Applied: 0, 'In Progress': 0, Hired: 0, Rejected: 0 };
+const hiredCandidates: typeof allCandidates = [];
+for (const c of allCandidates) {
+  const pipeline = (c.jobId as any)?.pipeline || [];
+  const bucket = bucketForCandidate(c, pipeline);
+  bucketCounts[bucket]++;
+  if (bucket === 'Hired') hiredCandidates.push(c);
+}
+
+const totalCandidates = allCandidates.length;
+const activeCandidates = allCandidates.filter(c => !c.rejected).length;
+const hiredCount = hiredCandidates.length;
 const hiringRate = totalCandidates ? Math.round((hiredCount / totalCandidates) * 100) : 0;
 
-// Funnel
-const funnelStages = [
-  { stage: 'Applied',     key: 'applied' },
-  { stage: 'Screened',    key: 'screening' },
-  { stage: 'Shortlisted', key: 'shortlisted' },
-  { stage: 'Interviewed', key: 'interview' },
-  { stage: 'Offer Sent',  key: 'offered' },
-  { stage: 'Hired',       key: 'hired' },
-];
-const funnelAgg = await Candidate.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]);
-const funnelMap: Record<string, number> = {};
-funnelAgg.forEach(r => { funnelMap[r._id] = r.count; });
-const appliedCount = funnelMap['applied'] || 0;
-const baseCount = Math.max(appliedCount, 1);
-const funnelData = funnelStages.map(s => ({
-  stage: s.stage,
-  count: funnelMap[s.key] || 0,
-  pct: Math.min(100, Math.round(((funnelMap[s.key] || 0) / baseCount) * 100)),
+const [totalJobs, activeJobsCount, scheduledCount] = await Promise.all([
+  Job.countDocuments(),
+  Job.countDocuments({ status: { $in: ['active', 'interviewing'] } }),
+  Interview.countDocuments({ status: 'scheduled' }),
+]);
+
+const totalForFunnel = totalCandidates || 1;
+const funnelOrder: FunnelBucket[] = ['Applied', 'In Progress', 'Hired', 'Rejected'];
+const funnelData = funnelOrder.map(stage => ({
+  stage,
+  count: bucketCounts[stage],
+  pct: Math.round((bucketCounts[stage] / totalForFunnel) * 100),
 }));
 
 // Top jobs
@@ -66,27 +73,14 @@ const upcoming = upcomingRaw.map(iv => ({
   interviewer: iv.interviewer,
 }));
 
-// Recent activity (latest candidates + interviews combined)
-const recentCandidates = await Candidate.find()
-  .populate('jobId', 'title')
-  .sort({ createdAt: -1 }).limit(3).lean();
-const recentInterviews = await Interview.find({ status: 'scheduled' })
-  .populate('candidateId', 'name')
-  .populate('jobId', 'title')
-  .sort({ createdAt: -1 }).limit(3).lean();
-
-const recentActivity = [
-  ...recentCandidates.map(c => ({
-    text: `${(c as any).name} applied for ${(c.jobId as any)?.title || 'a job'}`,
-    time: new Date(c.createdAt).toLocaleDateString(),
-    icon: 'upload',
-  })),
-  ...recentInterviews.map(iv => ({
-    text: `Interview scheduled for ${(iv.candidateId as any)?.name} — ${iv.round}`,
-    time: new Date(iv.createdAt).toLocaleDateString(),
-    icon: 'calendar',
-  })),
-].slice(0, 6);
+// Recent activity — sourced directly from the real, persisted audit trail.
+const recentLogs = await ActivityLog.find().sort({ createdAt: -1 }).limit(8).lean();
+const ACTIVITY_ICON: Record<string, string> = { job: 'briefcase', candidate: 'user', interview: 'calendar', stage: 'flag', team: 'user' };
+const recentActivity = recentLogs.map(l => ({
+  text: l.message,
+  time: new Date(l.createdAt).toLocaleDateString(),
+  icon: ACTIVITY_ICON[l.type] || 'circle',
+}));
 
 // Monthly trend (last 6 months)
 const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -97,16 +91,23 @@ const monthlyCandidates = await Candidate.aggregate([
   { $group: { _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } }, count: { $sum: 1 } } },
   { $sort: { '_id.year': 1, '_id.month': 1 } },
 ]);
-const monthlyHires = await Candidate.aggregate([
-  { $match: { status: 'hired', createdAt: { $gte: sixMonthsAgo } } },
-  { $group: { _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } }, count: { $sum: 1 } } },
-]);
+// "Hired" isn't a fixed status — it's whichever candidates currently sit in the
+// last stage of their job's own pipeline. The date they got there is the last
+// entry in their stageHistory (or, lacking history, when their record last changed).
+const hiredByMonth = new Map<string, number>();
+for (const c of hiredCandidates) {
+  const hist = c.stageHistory || [];
+  const at = new Date(hist.length ? hist[hist.length - 1].movedAt : c.updatedAt);
+  if (at < sixMonthsAgo) continue;
+  const k = `${at.getFullYear()}-${at.getMonth() + 1}`;
+  hiredByMonth.set(k, (hiredByMonth.get(k) || 0) + 1);
+}
 const monthlyTrends = [];
 for (let i = 5; i >= 0; i--) {
   const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
   const yr = d.getFullYear(); const mo = d.getMonth() + 1;
   const apps = monthlyCandidates.find((x: any) => x._id.year === yr && x._id.month === mo)?.count || 0;
-  const hires = monthlyHires.find((x: any) => x._id.year === yr && x._id.month === mo)?.count || 0;
+  const hires = hiredByMonth.get(`${yr}-${mo}`) || 0;
   monthlyTrends.push({ month: months[mo - 1], applications: apps, hires });
 }
 ---
@@ -130,7 +131,7 @@ for (let i = 5; i >= 0; i--) {
     <div class="stat-card shadow-lvl-2">
       <div class="stat-label">Total Jobs</div>
       <div class="stat-value">{totalJobs}</div>
-      <div class="stat-delta">{topJobs.filter(j => j.status === 'active').length} active</div>
+      <div class="stat-delta">{activeJobsCount} active</div>
     </div>
     <div class="stat-card shadow-lvl-2">
       <div class="stat-label">Active Candidates</div>
@@ -144,7 +145,7 @@ for (let i = 5; i >= 0; i--) {
     </div>
     <div class="stat-card shadow-lvl-2">
       <div class="stat-label">Hiring Success Rate</div>
-      <div class="stat-value">{hiringRate || 68}%</div>
+      <div class="stat-value">{hiringRate}%</div>
       <div class="stat-delta up">{hiredCount} hired total</div>
     </div>
   </div>
@@ -263,9 +264,8 @@ for (let i = 5; i >= 0; i--) {
           <div style="display:flex;flex-direction:column;">
             {recentActivity.map((act, idx) => (
               <div style={`display:flex;gap:12px;padding:10px 0;${idx < recentActivity.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}`}>
-                <div style="width:28px;height:28px;border-radius:6px;background:var(--bg-soft-2);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-                  {act.icon === 'calendar' && <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="1" y="2.5" width="11" height="10" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M1 6h11M4 1v3M9 1v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>}
-                  {act.icon === 'upload' && <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 8V2M4 4.5L6.5 2 9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M1 10.5h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>}
+                <div style="width:28px;height:28px;border-radius:6px;background:var(--bg-soft-2);display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--fg-mute);">
+                  <span set:html={getIconSvg(act.icon)} style="display:inline-flex;width:13px;height:13px;" />
                 </div>
                 <div>
                   <div style="font-size:13px;color:var(--fg-body);line-height:1.4;">{act.text}</div>

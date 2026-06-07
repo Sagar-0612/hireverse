@@ -1,6 +1,10 @@
 import type { APIRoute } from 'astro';
 import { connectDB } from '../../../db/connection';
 import { Interview } from '../../../db/models/Interview';
+import { Candidate } from '../../../db/models/Candidate';
+import { Job } from '../../../db/models/Job';
+import { findStage, isValidStageTransition } from '../../../lib/pipeline';
+import { logActivity } from '../../../lib/activity';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
@@ -39,19 +43,28 @@ export const POST: APIRoute = async ({ request }) => {
   await connectDB();
   try {
     const body = await request.json();
-    const { candidateId, round, date, time, duration, format, interviewer, notes } = body;
+    const { candidateId, round, date, time, duration, format, interviewer, notes, pipelineStage } = body;
 
     if (!candidateId || !round || !date || !time || !interviewer) {
       return json({ error: 'candidateId, round, date, time, and interviewer are required.' }, 400);
     }
 
-    const { Candidate } = await import('../../../db/models/Candidate');
-    const candidate = await Candidate.findById(candidateId).lean();
+    const candidate = await Candidate.findById(candidateId);
     if (!candidate) return json({ error: 'Candidate not found.' }, 404);
+
+    const job = await Job.findById(candidate.jobId).lean();
+    if (!job) return json({ error: 'Parent job not found.' }, 404);
+
+    // The round links to a pipeline stage — default to wherever the candidate
+    // currently sits if the scheduler didn't pick one explicitly.
+    const requestedStage = pipelineStage ? findStage(job.pipeline, pipelineStage) : null;
+    const currentStage = findStage(job.pipeline, candidate.currentStage);
+    const linkedStage = requestedStage || currentStage;
 
     const iv = await Interview.create({
       candidateId,
       jobId: candidate.jobId,
+      pipelineStage: linkedStage?.key || candidate.currentStage,
       round,
       date,
       time,
@@ -62,12 +75,46 @@ export const POST: APIRoute = async ({ request }) => {
       status: 'scheduled',
     });
 
-    // Advance candidate to interview stage if not already further
-    const stageOrder = ['applied','screening','shortlisted','interview','offered','hired'];
-    const curIdx = stageOrder.indexOf(candidate.status);
-    if (curIdx < stageOrder.indexOf('interview')) {
-      await Candidate.findByIdAndUpdate(candidateId, { status: 'interview' });
+    // Scheduling a round for a stage ahead of the candidate's current position
+    // auto-advances them there — replaces the old hardcoded stageOrder lookup.
+    if (
+      linkedStage &&
+      linkedStage.key !== candidate.currentStage &&
+      isValidStageTransition(job.pipeline, candidate.currentStage, linkedStage.key)
+    ) {
+      const fromStage = currentStage;
+      candidate.stageHistory.push({
+        stageKey: linkedStage.key,
+        stageLabel: linkedStage.label,
+        fromStageKey: fromStage?.key || '',
+        fromStageLabel: fromStage?.label || '',
+        movedBy: 'Maya Kim',
+        movedAt: new Date(),
+        notes: `Auto-advanced when "${round}" was scheduled`,
+      } as any);
+      candidate.currentStage = linkedStage.key;
+      await candidate.save();
+
+      await logActivity({
+        type: 'stage',
+        action: 'stage_changed',
+        message: `${candidate.name} moved from "${fromStage?.label || 'the start'}" to "${linkedStage.label}" (auto-advanced by scheduling "${round}")`,
+        entityType: 'candidate',
+        entityId: candidate._id.toString(),
+        jobId: candidate.jobId.toString(),
+        candidateId: candidate._id.toString(),
+      });
     }
+
+    await logActivity({
+      type: 'interview',
+      action: 'interview_scheduled',
+      message: `"${round}" interview scheduled for ${candidate.name} on ${date}`,
+      entityType: 'interview',
+      entityId: iv._id.toString(),
+      jobId: candidate.jobId.toString(),
+      candidateId: candidate._id.toString(),
+    });
 
     const populated = await Interview.findById(iv._id)
       .populate('candidateId', 'name')

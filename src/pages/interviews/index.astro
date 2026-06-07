@@ -2,31 +2,38 @@
 import AppLayout from "../../layouts/AppLayout.astro";
 import { connectDB } from "../../db/connection";
 import { Interview } from "../../db/models/Interview";
+import { findStage } from "../../lib/pipeline";
 
 await connectDB();
 const rawInterviews = await Interview.find()
   .populate('candidateId', 'name')
-  .populate('jobId', 'title department')
+  .populate('jobId', 'title department pipeline')
   .sort({ date: 1, time: 1 })
   .lean();
 
-const interviews = rawInterviews.map(iv => ({
-  id: iv._id.toString(),
-  round: iv.round,
-  interviewer: iv.interviewer,
-  date: iv.date,
-  time: iv.time,
-  duration: iv.duration,
-  format: iv.format,
-  status: iv.status,
-  commScore: iv.commScore,
-  techScore: iv.techScore,
-  confidenceScore: iv.confidenceScore,
-  recommendation: iv.recommendation,
-  candidateName: (iv.candidateId as any)?.name || 'Unknown',
-  candidateId: (iv.candidateId as any)?._id?.toString() || '',
-  jobTitle: (iv.jobId as any)?.title || '',
-}));
+const interviews = rawInterviews.map(iv => {
+  const job = iv.jobId as any;
+  const stage = findStage(job?.pipeline || [], iv.pipelineStage);
+  return {
+    id: iv._id.toString(),
+    round: iv.round,
+    interviewer: iv.interviewer,
+    date: iv.date,
+    time: iv.time,
+    duration: iv.duration,
+    format: iv.format,
+    status: iv.status,
+    commScore: iv.commScore,
+    techScore: iv.techScore,
+    confidenceScore: iv.confidenceScore,
+    recommendation: iv.recommendation,
+    candidateName: (iv.candidateId as any)?.name || 'Unknown',
+    candidateId: (iv.candidateId as any)?._id?.toString() || '',
+    jobTitle: job?.title || '',
+    stageLabel: stage?.label || '',
+    stageColor: stage?.color || '#6b7280',
+  };
+});
 
 const today = new Date().toISOString().split('T')[0];
 const scheduled = interviews.filter(iv => iv.status === 'scheduled');
@@ -87,7 +94,10 @@ const upcoming = interviews.filter(iv => iv.date >= today && iv.status === 'sche
             </div>
             <div style="flex:1;min-width:0;">
               <div style="font-size:14px;font-weight:600;color:var(--fg);">{iv.candidateName}</div>
-              <div style="font-size:13px;color:var(--fg-body);">{iv.jobTitle} · {iv.round}</div>
+              <div style="font-size:13px;color:var(--fg-body);display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                {iv.jobTitle} · {iv.round}
+                {iv.stageLabel && <span class="badge" style={`font-size:10px;background:${iv.stageColor}22;color:${iv.stageColor};border:1px solid ${iv.stageColor}55;`}>{iv.stageLabel}</span>}
+              </div>
               <div style="font-size:12px;color:var(--fg-mute);margin-top:2px;">{iv.time} · {iv.duration} min · {iv.interviewer} · {iv.format}</div>
             </div>
             <div style="display:flex;gap:8px;flex-shrink:0;">
@@ -148,7 +158,10 @@ const upcoming = interviews.filter(iv => iv.date >= today && iv.status === 'sche
               <tr>
                 <td style="font-weight:500;color:var(--fg);">{iv.candidateName}</td>
                 <td style="font-size:13px;color:var(--fg-body);">{iv.jobTitle}</td>
-                <td style="color:var(--fg-mute);">{iv.round}</td>
+                <td style="color:var(--fg-mute);">
+                  {iv.round}
+                  {iv.stageLabel && <span class="badge" style={`margin-left:6px;font-size:10px;background:${iv.stageColor}22;color:${iv.stageColor};border:1px solid ${iv.stageColor}55;`}>{iv.stageLabel}</span>}
+                </td>
                 <td style="color:var(--fg-mute);">{iv.interviewer}</td>
                 <td>
                   <span style="font-size:13px;font-family:'JetBrains Mono',monospace;">{iv.date}</span>

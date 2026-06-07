@@ -4,43 +4,87 @@ import { connectDB } from "../../../db/connection";
 import { Candidate } from "../../../db/models/Candidate";
 import { Interview } from "../../../db/models/Interview";
 import { Types } from "mongoose";
+import { sortedPipeline, findStage, getValidNextStages, getIconSvg } from "../../../lib/pipeline";
 
 const { id } = Astro.params;
 if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/candidates');
 
 await connectDB();
-const raw = await Candidate.findById(id).populate('jobId', 'title').lean();
+const raw = await Candidate.findById(id).populate('jobId', 'title pipeline').lean();
 if (!raw) return Astro.redirect('/candidates');
 
-const candidate = { ...raw, id: raw._id.toString(), jobTitle: (raw.jobId as any)?.title || '' };
-const applied = new Date(raw.createdAt).toISOString().split('T')[0];
+const job = raw.jobId as any;
+const pipeline = sortedPipeline(job?.pipeline || []);
+const candidate = { ...raw, id: raw._id.toString(), jobTitle: job?.title || '' };
+const applied = new Date(raw.createdAt).toISOString();
+const currentStage = findStage(pipeline, candidate.currentStage);
+const validStages = getValidNextStages(pipeline, candidate.currentStage);
 
-// Get all interviews for this candidate
-const interviews = await Interview.find({ candidateId: id }).sort({ date: 1 }).lean();
+const interviews = await Interview.find({ candidateId: id }).sort({ date: 1, time: 1 }).lean();
+const interviewsByStage = new Map<string, typeof interviews>();
+for (const iv of interviews) {
+  const key = iv.pipelineStage || '';
+  if (!interviewsByStage.has(key)) interviewsByStage.set(key, []);
+  interviewsByStage.get(key)!.push(iv);
+}
 
-const statusOrder = ['applied','screening','shortlisted','interview','offered','hired','rejected'];
-const currentStatusIdx = statusOrder.indexOf(candidate.status);
-
-const stageMap: Record<string, string> = {
-  applied:     'Applied',
-  screening:   'Screened',
-  shortlisted: 'Shortlisted',
-  interview:   'L1 Interview',
-  offered:     'Offer',
-  hired:       'Hired',
-  rejected:    'Rejected',
+// The journey is built entirely from real records: an implicit "arrived at the
+// first stage" event from createdAt, then every real stageHistory transition in
+// order, each carrying its mover/timestamp/notes — no fabricated steps.
+type TimelineEvent = {
+  type: 'arrival' | 'rejection';
+  stageKey?: string;
+  stageLabel?: string;
+  color?: string;
+  icon?: string;
+  fromLabel?: string;
+  at: Date | string;
+  movedBy?: string;
+  notes?: string;
+  isInitial?: boolean;
 };
 
-const allStages = [
-  { key: 'applied',     label: 'Applied',       systemNote: `Resume uploaded. AI analysis initiated.` },
-  { key: 'screening',   label: 'Screened',       systemNote: `AI analysis complete. Score: ${candidate.score}. Skills: ${candidate.skillsMatch}%.` },
-  { key: 'shortlisted', label: 'Shortlisted',    systemNote: 'Candidate reviewed and shortlisted for next stage.' },
-  { key: 'interview',   label: 'Interview',      systemNote: interviews.length ? `${interviews.length} interview(s) scheduled.` : 'Interview to be scheduled.' },
-  { key: 'offered',     label: 'Offer',          systemNote: 'Offer extended to candidate.' },
-  { key: 'hired',       label: 'Hired',          systemNote: 'Candidate accepted the offer. Welcome aboard!' },
-];
+const events: TimelineEvent[] = [];
+const firstStage = pipeline[0];
+if (firstStage) {
+  events.push({
+    type: 'arrival',
+    stageKey: firstStage.key,
+    stageLabel: firstStage.label,
+    color: firstStage.color,
+    icon: firstStage.icon,
+    at: raw.createdAt,
+    isInitial: true,
+  });
+}
+for (const h of (candidate.stageHistory || [])) {
+  const stage = findStage(pipeline, h.stageKey);
+  events.push({
+    type: 'arrival',
+    stageKey: h.stageKey,
+    stageLabel: h.stageLabel || stage?.label || h.stageKey,
+    color: stage?.color || '#6b7280',
+    icon: stage?.icon || 'circle',
+    fromLabel: h.fromStageLabel,
+    at: h.movedAt,
+    movedBy: h.movedBy,
+    notes: h.notes,
+  });
+}
+if (candidate.rejected) {
+  events.push({ type: 'rejection', at: candidate.rejectedAt || raw.updatedAt, movedBy: candidate.rejectedBy });
+}
 
-const completedKeys = statusOrder.slice(0, currentStatusIdx + 1);
+const visitedKeys = new Set(events.filter(e => e.type === 'arrival').map(e => e.stageKey));
+const pendingStages = candidate.rejected ? [] : pipeline.filter(s => !visitedKeys.has(s.key));
+
+const fmt = (d: Date | string) => {
+  const date = new Date(d);
+  return isNaN(date.getTime()) ? '' : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+};
+
+const stepNumber = events.filter(e => e.type === 'arrival').length;
+const totalSteps = pipeline.length || 1;
 ---
 
 <AppLayout title={`${candidate.name} · Journey`} activeNav="candidates">
@@ -56,84 +100,116 @@ const completedKeys = statusOrder.slice(0, currentStatusIdx + 1);
 
   <div style="display:grid;grid-template-columns:1fr 260px;gap:24px;align-items:start;">
     <div class="card shadow-lvl-2">
-      <div class="timeline">
-        {allStages.map((stage, i) => {
-          const isCompleted = completedKeys.includes(stage.key);
-          const isCurrent = candidate.status === stage.key;
-          const stageInterviews = stage.key === 'interview' ? interviews : [];
-          return (
-            <div class="timeline-item" style={i === allStages.length - 1 ? 'padding-bottom:0;' : ''}>
-              <div class={`timeline-dot ${isCompleted ? 'completed' : ''}`} style={isCurrent && !isCompleted ? 'border-color:var(--fg);' : ''}>
-                {isCompleted && (
+      {events.length === 0 ? (
+        <div class="empty-state" style="padding:32px;">
+          <div style="font-size:15px;font-weight:500;color:var(--fg);margin-bottom:4px;">No journey yet</div>
+          <div style="font-size:13px;">This job has no configured pipeline, so there's nothing to track.</div>
+        </div>
+      ) : (
+        <div class="timeline">
+          {events.map((ev, i) => {
+            const isLast = i === events.length - 1 && pendingStages.length === 0;
+            const stageInterviews = ev.type === 'arrival' ? (interviewsByStage.get(ev.stageKey || '') || []) : [];
+            return (
+              <div class="timeline-item" style={isLast ? 'padding-bottom:0;' : ''}>
+                <div class="timeline-dot completed" style={ev.type === 'rejection' ? 'border-color:#ef4444;background:#ef4444;' : `border-color:${ev.color};background:${ev.color};`}>
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                    <path d="M2 5l2.5 2.5 3.5-4" stroke="var(--bg)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M2 5l2.5 2.5 3.5-4" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
-                )}
-              </div>
-              <div style={`padding:2px 0 ${i < allStages.length - 1 ? '24px' : '0'};`}>
-                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
-                  <span style={`font-size:14px;font-weight:${isCompleted || isCurrent ? '600' : '400'};color:${isCompleted || isCurrent ? 'var(--fg)' : 'var(--fg-mute)'};`}>{stage.label}</span>
-                  {isCompleted && !isCurrent && <span class="badge badge-success" style="font-size:11px;">Done</span>}
-                  {isCurrent && <span class="badge badge-info" style="font-size:11px;">Current</span>}
-                  {!isCompleted && !isCurrent && <span class="badge badge-neutral" style="font-size:11px;">Pending</span>}
-                  {stage.key === 'applied' && <span style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;">{applied}</span>}
                 </div>
-                {(isCompleted || isCurrent) && (
-                  <p style="font-size:13px;color:var(--fg-body);margin:0 0 8px;line-height:1.5;">{stage.systemNote}</p>
-                )}
-                {stage.key === 'screening' && isCompleted && (
-                  <div style="display:inline-flex;align-items:center;gap:8px;background:var(--bg-soft);padding:6px 12px;border-radius:6px;border:1px solid var(--border);">
-                    <span style="font-size:11px;color:var(--fg-mute);">AI Score</span>
-                    <span style="font-size:15px;font-weight:700;color:var(--fg);font-family:'JetBrains Mono',monospace;">{candidate.score}</span>
-                    <span style="font-size:11px;color:var(--fg-mute);">·</span>
-                    <span style="font-size:11px;color:var(--fg-mute);">{candidate.recommendation}</span>
+                <div style={`padding:2px 0 ${isLast ? '0' : '24px'};`}>
+                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
+                    {ev.type === 'rejection' ? (
+                      <span style="font-size:14px;font-weight:600;color:#ef4444;">Rejected</span>
+                    ) : (
+                      <span style="font-size:14px;font-weight:600;color:var(--fg);display:flex;align-items:center;gap:6px;">
+                        <span set:html={getIconSvg(ev.icon || 'circle')} style={`color:${ev.color};display:inline-flex;`} />
+                        {ev.stageLabel}
+                      </span>
+                    )}
+                    {ev.type === 'arrival' && ev.stageKey === candidate.currentStage && !candidate.rejected && <span class="badge badge-info" style="font-size:11px;">Current</span>}
+                    <span style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;">{fmt(ev.at)}</span>
                   </div>
-                )}
-                {stageInterviews.length > 0 && (
-                  <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">
-                    {stageInterviews.map(iv => (
-                      <a href={`/interviews/${iv._id.toString()}`} style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:6px;background:var(--bg-soft);border:1px solid var(--border);text-decoration:none;">
-                        <div>
-                          <div style="font-size:13px;font-weight:500;color:var(--fg);">{iv.round}</div>
-                          <div style="font-size:12px;color:var(--fg-mute);">{iv.date} · {iv.time} · {iv.interviewer}</div>
-                          {iv.status === 'completed' && iv.techScore > 0 && (
-                            <div style="font-size:11px;color:var(--fg-mute);margin-top:2px;font-family:'JetBrains Mono',monospace;">
-                              Tech: {iv.techScore} · Comm: {iv.commScore} · Conf: {iv.confidenceScore}
-                            </div>
-                          )}
-                        </div>
-                        <span class={`badge ${iv.status === 'completed' ? 'badge-success' : 'badge-info'} ml-auto`} style="margin-left:auto;flex-shrink:0;">{iv.status}</span>
-                      </a>
-                    ))}
-                  </div>
-                )}
+                  <p style="font-size:13px;color:var(--fg-body);margin:0 0 6px;line-height:1.5;">
+                    {ev.type === 'rejection'
+                      ? `Marked as rejected${ev.movedBy ? ` by ${ev.movedBy}` : ''}.`
+                      : ev.isInitial
+                        ? `Resume uploaded — entered the pipeline at "${ev.stageLabel}". AI score: ${candidate.score} · ${candidate.recommendation}.`
+                        : `Moved from "${ev.fromLabel || 'the start'}" to "${ev.stageLabel}"${ev.movedBy ? ` by ${ev.movedBy}` : ''}.`}
+                  </p>
+                  {ev.notes && (
+                    <div style="font-size:12px;color:var(--fg-body);background:var(--bg-soft);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:6px;">
+                      <span style="color:var(--fg-mute);">Note:</span> {ev.notes}
+                    </div>
+                  )}
+                  {stageInterviews.length > 0 && (
+                    <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">
+                      {stageInterviews.map(iv => (
+                        <a href={`/interviews/${iv._id.toString()}`} style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:6px;background:var(--bg-soft);border:1px solid var(--border);text-decoration:none;">
+                          <div>
+                            <div style="font-size:13px;font-weight:500;color:var(--fg);">{iv.round}</div>
+                            <div style="font-size:12px;color:var(--fg-mute);">{iv.date} · {iv.time} · {iv.interviewer}</div>
+                            {iv.status === 'completed' && iv.techScore > 0 && (
+                              <div style="font-size:11px;color:var(--fg-mute);margin-top:2px;font-family:'JetBrains Mono',monospace;">
+                                Tech: {iv.techScore} · Comm: {iv.commScore} · Conf: {iv.confidenceScore}
+                              </div>
+                            )}
+                          </div>
+                          <span class={`badge ${iv.status === 'completed' ? 'badge-success' : 'badge-info'}`} style="margin-left:auto;flex-shrink:0;">{iv.status}</span>
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          {pendingStages.map((stage, i) => (
+            <div class="timeline-item" style={i === pendingStages.length - 1 ? 'padding-bottom:0;' : ''}>
+              <div class="timeline-dot"></div>
+              <div style={`padding:2px 0 ${i < pendingStages.length - 1 ? '24px' : '0'};`}>
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
+                  <span style="font-size:14px;font-weight:400;color:var(--fg-mute);display:flex;align-items:center;gap:6px;">
+                    <span set:html={getIconSvg(stage.icon)} style="display:inline-flex;opacity:0.5;" />
+                    {stage.label}
+                  </span>
+                  <span class="badge badge-neutral" style="font-size:11px;">Pending</span>
+                </div>
               </div>
             </div>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
 
     <div style="display:flex;flex-direction:column;gap:16px;">
       <div class="card shadow-lvl-2">
         <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Current Stage</h3>
-        <div style="font-size:20px;font-weight:600;color:var(--fg);margin-bottom:4px;">{stageMap[candidate.status] || candidate.status}</div>
-        <div style="font-size:13px;color:var(--fg-mute);">Step {currentStatusIdx + 1} of {allStages.length}</div>
-        <div class="progress" style="margin-top:12px;">
-          <div class="progress-bar" style={`width:${Math.round((currentStatusIdx + 1) / allStages.length * 100)}%`}></div>
-        </div>
+        {candidate.rejected ? (
+          <div style="font-size:20px;font-weight:600;color:#ef4444;margin-bottom:4px;">Rejected</div>
+        ) : (
+          <>
+            <div style="font-size:20px;font-weight:600;color:var(--fg);margin-bottom:4px;">{currentStage?.label || candidate.currentStage}</div>
+            <div style="font-size:13px;color:var(--fg-mute);">Step {stepNumber} of {totalSteps}</div>
+            <div class="progress" style="margin-top:12px;">
+              <div class="progress-bar" style={`width:${Math.round(stepNumber / totalSteps * 100)}%`}></div>
+            </div>
+          </>
+        )}
       </div>
 
-      <div class="card shadow-lvl-2">
-        <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Move to Stage</h3>
-        <select id="stage-select" class="select" style="margin-bottom:10px;">
-          {statusOrder.filter(s => s !== 'rejected').map(s => (
-            <option value={s} selected={candidate.status === s}>{stageMap[s] || s}</option>
-          ))}
-        </select>
-        <button id="move-stage-btn" class="btn btn-primary" style="width:100%;border-radius:6px;">Update Stage</button>
-        <button id="reject-btn" class="btn btn-ghost" style="width:100%;color:#ee0000;margin-top:8px;">Reject Candidate</button>
-      </div>
+      {!candidate.rejected && validStages.length > 0 && (
+        <div class="card shadow-lvl-2">
+          <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Move to Stage</h3>
+          <select id="stage-select" class="select" style="margin-bottom:10px;">
+            {validStages.map(s => (
+              <option value={s.key} selected={candidate.currentStage === s.key}>{s.label}</option>
+            ))}
+          </select>
+          <button id="move-stage-btn" class="btn btn-primary" style="width:100%;border-radius:6px;">Update Stage</button>
+          <button id="reject-btn" class="btn btn-ghost" style="width:100%;color:#ef4444;margin-top:8px;">Reject Candidate</button>
+        </div>
+      )}
 
       <div class="card shadow-lvl-2">
         <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Schedule Interview</h3>
@@ -145,24 +221,31 @@ const completedKeys = statusOrder.slice(0, currentStatusIdx + 1);
 
 <script define:vars={{ candidateId: candidate.id }}>
   document.getElementById('move-stage-btn')?.addEventListener('click', async () => {
-    const status = document.getElementById('stage-select').value;
+    const currentStage = document.getElementById('stage-select').value;
+    const notes = prompt('Add an optional note about this move (visible on this journey):') || '';
     const res = await fetch(`/api/candidates/${candidateId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ currentStage, notes }),
     });
     if (res.ok) window.location.reload();
-    else alert('Failed to update stage.');
+    else {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || 'Failed to update stage.');
+    }
   });
 
   document.getElementById('reject-btn')?.addEventListener('click', async () => {
-    if (!confirm('Mark this candidate as rejected?')) return;
+    if (!confirm('Reject this candidate? This is a terminal action and cannot be undone.')) return;
     const res = await fetch(`/api/candidates/${candidateId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'rejected' }),
+      body: JSON.stringify({ rejected: true }),
     });
     if (res.ok) window.location.reload();
-    else alert('Failed.');
+    else {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || 'Failed to reject candidate.');
+    }
   });
 </script>
