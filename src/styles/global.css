@@ -606,3 +606,77 @@ td {
 .funnel-track { flex: 1; height: 8px; background: var(--bg-soft-2); border-radius: 4px; overflow: hidden; }
 .funnel-fill { height: 100%; border-radius: 4px; background: var(--fg); }
 .funnel-count { font-size: 13px; color: var(--fg-mute); width: 48px; text-align: right; flex-shrink: 0; font-family: "JetBrains Mono", ui-monospace, monospace; }
+
+/* ── Toasts ── */
+#hv-toast-stack {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  pointer-events: none;
+}
+
+.hv-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px -8px rgba(0,0,0,0.25), inset 0 0 0 1px rgba(0,0,0,0.04);
+  pointer-events: auto;
+  opacity: 0;
+  transform: translateX(16px);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+.dark .hv-toast { box-shadow: 0 8px 24px -8px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.06); }
+.hv-toast.show { opacity: 1; transform: translateX(0); }
+.hv-toast-icon { flex-shrink: 0; display: flex; margin-top: 1px; }
+.hv-toast-msg { font-size: 13px; line-height: 1.5; color: var(--fg); flex: 1; }
+.hv-toast-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--fg-mute);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  border-radius: 4px;
+}
+.hv-toast-close:hover { color: var(--fg); background: var(--bg-soft-2); }
+.hv-toast-success .hv-toast-icon { color: #10b981; }
+.hv-toast-error .hv-toast-icon { color: #ef4444; }
+.hv-toast-info .hv-toast-icon { color: #3b82f6; }
+
+/* ── Confirm dialog ── */
+#hv-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 199;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+#hv-confirm-overlay.show { display: flex; }
+
+.hv-confirm-dialog {
+  width: 100%;
+  max-width: 400px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 24px 48px -12px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(0,0,0,0.04);
+  padding: 20px;
+}
+.dark .hv-confirm-dialog { box-shadow: 0 24px 48px -12px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.06); }
+.hv-confirm-title { font-size: 15px; font-weight: 600; color: var(--fg); margin: 0 0 8px; }
+.hv-confirm-message { font-size: 13px; color: var(--fg-body); line-height: 1.6; margin: 0 0 18px; white-space: pre-wrap; }
+.hv-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }

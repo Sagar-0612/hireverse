@@ -217,11 +217,17 @@ const members = rawMembers.map(m => ({
   // Delete member
   document.querySelectorAll<HTMLButtonElement>('.delete-member-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
-      if (!confirm('Remove this team member?')) return;
+      const ok = await (window as any).hvConfirm({
+        title: 'Remove team member',
+        message: 'Remove this team member?',
+        confirmLabel: 'Remove',
+        destructive: true,
+      });
+      if (!ok) return;
       const id = btn.dataset.id;
       const res = await fetch(`/api/team/${id}`, { method: 'DELETE' });
       if (res.ok) window.location.reload();
-      else alert('Failed to remove member.');
+      else (window as any).hvToast('Failed to remove member.', 'error');
     });
   });
 </script>

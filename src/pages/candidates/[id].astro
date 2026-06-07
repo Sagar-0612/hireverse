@@ -197,7 +197,13 @@ const skillScores = skillsToShow.map((skill: string) => {
 <script define:vars={{ candidateId: candidate.id }}>
   document.getElementById('stage-select')?.addEventListener('change', async (e) => {
     const currentStage = e.target.value;
-    const notes = prompt('Add an optional note about this move (visible on the candidate journey):') || '';
+    const notes = await window.hvPrompt({
+      title: 'Move candidate',
+      message: 'Add an optional note about this move (visible on the candidate journey):',
+      placeholder: 'e.g. Strong portfolio, moving to next round',
+      confirmLabel: 'Move',
+    });
+    if (notes === null) return;
     const res = await fetch(`/api/candidates/${candidateId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -205,13 +211,19 @@ const skillScores = skillsToShow.map((skill: string) => {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      alert(err.error || 'Failed to update stage');
+      window.hvToast(err.error || 'Failed to update stage', 'error');
     }
     window.location.reload();
   });
 
   document.getElementById('reject-btn')?.addEventListener('click', async () => {
-    if (!confirm('Reject this candidate? This is a terminal action and cannot be undone.')) return;
+    const ok = await window.hvConfirm({
+      title: 'Reject candidate',
+      message: 'Reject this candidate? This is a terminal action and cannot be undone.',
+      confirmLabel: 'Reject',
+      destructive: true,
+    });
+    if (!ok) return;
     const res = await fetch(`/api/candidates/${candidateId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -219,7 +231,7 @@ const skillScores = skillsToShow.map((skill: string) => {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      alert(err.error || 'Failed to reject candidate');
+      window.hvToast(err.error || 'Failed to reject candidate', 'error');
     }
     window.location.reload();
   });
@@ -237,9 +249,15 @@ const skillScores = skillsToShow.map((skill: string) => {
   });
 
   document.getElementById('delete-btn')?.addEventListener('click', async () => {
-    if (!confirm('Delete this candidate? This cannot be undone.')) return;
+    const ok = await window.hvConfirm({
+      title: 'Delete candidate',
+      message: 'Delete this candidate? This cannot be undone.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
     const res = await fetch(`/api/candidates/${candidateId}`, { method: 'DELETE' });
     if (res.ok) window.location.href = '/candidates';
-    else alert('Failed to delete.');
+    else window.hvToast('Failed to delete.', 'error');
   });
 </script>

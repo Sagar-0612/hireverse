@@ -127,22 +127,33 @@ const jobs = await Promise.all(rawJobs.map(async j => ({
 
   async function archiveJob(btn: HTMLButtonElement) {
     const id = btn.dataset.jobId;
-    if (!confirm('Archive this job?')) return;
+    const ok = await (window as any).hvConfirm({
+      title: 'Archive job',
+      message: 'Archive this job?',
+      confirmLabel: 'Archive',
+    });
+    if (!ok) return;
     const res = await fetch(`/api/jobs/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'archived' }),
     });
     if (res.ok) window.location.reload();
-    else alert('Failed to archive job.');
+    else (window as any).hvToast('Failed to archive job.', 'error');
   }
 
   async function deleteJob(btn: HTMLButtonElement) {
     const id = btn.dataset.jobId;
-    if (!confirm('Delete this job and all its candidates? This cannot be undone.')) return;
+    const ok = await (window as any).hvConfirm({
+      title: 'Delete job',
+      message: 'Delete this job and all its candidates? This cannot be undone.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
     const res = await fetch(`/api/jobs/${id}`, { method: 'DELETE' });
     if (res.ok) window.location.reload();
-    else alert('Failed to delete job.');
+    else (window as any).hvToast('Failed to delete job.', 'error');
   }
 
   (window as any).archiveJob = archiveJob;

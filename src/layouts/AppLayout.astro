@@ -125,6 +125,22 @@ const navItems = [
   <!-- Overlay for mobile sidebar -->
   <div id="sidebar-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:49;"></div>
 
+  <!-- Toast stack (window.hvToast) -->
+  <div id="hv-toast-stack" aria-live="polite"></div>
+
+  <!-- Confirm / prompt dialog (window.hvConfirm, window.hvPrompt) -->
+  <div id="hv-confirm-overlay">
+    <div class="hv-confirm-dialog" role="dialog" aria-modal="true">
+      <h3 class="hv-confirm-title" id="hv-confirm-title"></h3>
+      <p class="hv-confirm-message" id="hv-confirm-message"></p>
+      <input class="input" id="hv-confirm-input" style="display:none;margin:-6px 0 16px;" />
+      <div class="hv-confirm-actions">
+        <button class="btn btn-ghost" id="hv-confirm-cancel">Cancel</button>
+        <button class="btn btn-primary" id="hv-confirm-ok">Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     // Theme persistence
     (function() {
@@ -182,6 +198,96 @@ const navItems = [
     }
     checkWidth();
     window.addEventListener("resize", checkWidth);
+
+    // ── Toasts (window.hvToast) ──
+    const TOAST_ICONS = {
+      success: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5"/><path d="M5.2 8.2l1.8 1.8 3.6-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+      error: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 5v3.5M8 11v.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+      info: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 7.5v3.5M8 5v.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+    };
+    const toastStack = document.getElementById("hv-toast-stack");
+    window.hvToast = function(message, type) {
+      type = (type === "success" || type === "error") ? type : "info";
+      const el = document.createElement("div");
+      el.className = `hv-toast hv-toast-${type}`;
+      el.innerHTML = `<span class="hv-toast-icon">${TOAST_ICONS[type]}</span><span class="hv-toast-msg"></span><button class="hv-toast-close" aria-label="Dismiss"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>`;
+      el.querySelector(".hv-toast-msg").textContent = message;
+      let dismissed = false;
+      const close = () => {
+        if (dismissed) return;
+        dismissed = true;
+        el.classList.remove("show");
+        setTimeout(() => el.remove(), 220);
+      };
+      el.querySelector(".hv-toast-close")?.addEventListener("click", close);
+      toastStack?.appendChild(el);
+      requestAnimationFrame(() => el.classList.add("show"));
+      setTimeout(close, 5000);
+    };
+
+    // ── Confirm / prompt dialog (window.hvConfirm, window.hvPrompt) ──
+    const confirmOverlay = document.getElementById("hv-confirm-overlay");
+    const confirmTitleEl = document.getElementById("hv-confirm-title");
+    const confirmMessageEl = document.getElementById("hv-confirm-message");
+    const confirmInputEl = document.getElementById("hv-confirm-input");
+    const confirmOkBtn = document.getElementById("hv-confirm-ok");
+    const confirmCancelBtn = document.getElementById("hv-confirm-cancel");
+    let confirmResolve = null;
+
+    function closeDialog(result) {
+      confirmOverlay?.classList.remove("show");
+      const resolve = confirmResolve;
+      confirmResolve = null;
+      if (resolve) resolve(result);
+    }
+
+    function openDialog(opts) {
+      return new Promise((resolve) => {
+        confirmResolve = resolve;
+        if (confirmTitleEl) {
+          confirmTitleEl.textContent = opts.title || "";
+          confirmTitleEl.style.display = opts.title ? "" : "none";
+        }
+        if (confirmMessageEl) {
+          confirmMessageEl.textContent = opts.message || "";
+          confirmMessageEl.style.display = opts.message ? "" : "none";
+        }
+        if (confirmInputEl) {
+          if (opts.withInput) {
+            confirmInputEl.style.display = "";
+            confirmInputEl.value = opts.defaultValue || "";
+            confirmInputEl.placeholder = opts.placeholder || "";
+          } else {
+            confirmInputEl.style.display = "none";
+          }
+        }
+        if (confirmOkBtn) {
+          confirmOkBtn.textContent = opts.confirmLabel || "Confirm";
+          confirmOkBtn.className = opts.destructive ? "btn btn-destructive" : "btn btn-primary";
+        }
+        if (confirmCancelBtn) confirmCancelBtn.textContent = opts.cancelLabel || "Cancel";
+        confirmOverlay?.classList.add("show");
+        setTimeout(() => (opts.withInput ? confirmInputEl : confirmOkBtn)?.focus(), 50);
+      });
+    }
+
+    confirmOkBtn?.addEventListener("click", () => closeDialog("ok"));
+    confirmCancelBtn?.addEventListener("click", () => closeDialog("cancel"));
+    confirmOverlay?.addEventListener("click", (e) => { if (e.target === confirmOverlay) closeDialog("cancel"); });
+    confirmInputEl?.addEventListener("keydown", (e) => { if (e.key === "Enter") closeDialog("ok"); });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && confirmOverlay?.classList.contains("show")) closeDialog("cancel");
+    });
+
+    window.hvConfirm = function(opts) {
+      const o = typeof opts === "string" ? { message: opts } : (opts || {});
+      return openDialog({ ...o, withInput: false }).then((r) => r === "ok");
+    };
+
+    window.hvPrompt = function(opts) {
+      const o = typeof opts === "string" ? { message: opts } : (opts || {});
+      return openDialog({ ...o, withInput: true }).then((r) => (r === "ok" ? confirmInputEl.value : null));
+    };
   </script>
 </body>
 </html>

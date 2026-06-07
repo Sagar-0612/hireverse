@@ -42,6 +42,7 @@ type TimelineEvent = {
   movedBy?: string;
   notes?: string;
   isInitial?: boolean;
+  skippedStages?: { key: string; label: string }[];
 };
 
 const events: TimelineEvent[] = [];
@@ -59,6 +60,15 @@ if (firstStage) {
 }
 for (const h of (candidate.stageHistory || [])) {
   const stage = findStage(pipeline, h.stageKey);
+  const fromStage = findStage(pipeline, h.fromStageKey);
+  // A jump that lands past intermediate stages (e.g. Applied straight to Hired)
+  // is recorded as a deliberate skip on this transition — not as "pending" work
+  // still to come, which would render confusingly below a terminal stage.
+  const skippedStages = (fromStage && stage && stage.order > fromStage.order + 1)
+    ? sortedPipeline(pipeline)
+        .filter(s => s.order > fromStage.order && s.order < stage.order)
+        .map(s => ({ key: s.key, label: s.label }))
+    : [];
   events.push({
     type: 'arrival',
     stageKey: h.stageKey,
@@ -69,6 +79,7 @@ for (const h of (candidate.stageHistory || [])) {
     at: h.movedAt,
     movedBy: h.movedBy,
     notes: h.notes,
+    skippedStages,
   });
 }
 if (candidate.rejected) {
@@ -76,14 +87,20 @@ if (candidate.rejected) {
 }
 
 const visitedKeys = new Set(events.filter(e => e.type === 'arrival').map(e => e.stageKey));
-const pendingStages = candidate.rejected ? [] : pipeline.filter(s => !visitedKeys.has(s.key));
+const currentOrder = currentStage ? currentStage.order : -1;
+// Only stages still ahead of the candidate's current position are genuinely
+// "pending" — anything behind that was never visited was deliberately skipped
+// and is already called out inline on the transition that jumped over it.
+const pendingStages = candidate.rejected ? [] : pipeline.filter(s => !visitedKeys.has(s.key) && s.order > currentOrder);
 
 const fmt = (d: Date | string) => {
   const date = new Date(d);
   return isNaN(date.getTime()) ? '' : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 };
 
-const stepNumber = events.filter(e => e.type === 'arrival').length;
+// Position in the pipeline reflects where the candidate actually stands today —
+// not how many arrival events fired, which would undercount when stages were skipped.
+const stepNumber = currentOrder + 1;
 const totalSteps = pipeline.length || 1;
 ---
 
@@ -137,6 +154,12 @@ const totalSteps = pipeline.length || 1;
                         ? `Resume uploaded — entered the pipeline at "${ev.stageLabel}". AI score: ${candidate.score} · ${candidate.recommendation}.`
                         : `Moved from "${ev.fromLabel || 'the start'}" to "${ev.stageLabel}"${ev.movedBy ? ` by ${ev.movedBy}` : ''}.`}
                   </p>
+                  {ev.skippedStages && ev.skippedStages.length > 0 && (
+                    <div style="font-size:12px;color:var(--fg-mute);background:var(--bg-soft);border:1px dashed var(--border);border-radius:6px;padding:8px 10px;margin-bottom:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                      <span class="badge badge-neutral" style="font-size:11px;flex-shrink:0;">Skipped</span>
+                      <span>Jumped past {ev.skippedStages.map(s => s.label).join(', ')} on the way to "{ev.stageLabel}".</span>
+                    </div>
+                  )}
                   {ev.notes && (
                     <div style="font-size:12px;color:var(--fg-body);background:var(--bg-soft);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:6px;">
                       <span style="color:var(--fg-mute);">Note:</span> {ev.notes}
@@ -222,7 +245,13 @@ const totalSteps = pipeline.length || 1;
 <script define:vars={{ candidateId: candidate.id }}>
   document.getElementById('move-stage-btn')?.addEventListener('click', async () => {
     const currentStage = document.getElementById('stage-select').value;
-    const notes = prompt('Add an optional note about this move (visible on this journey):') || '';
+    const notes = await window.hvPrompt({
+      title: 'Move candidate',
+      message: 'Add an optional note about this move (visible on this journey):',
+      placeholder: 'e.g. Strong portfolio, moving to next round',
+      confirmLabel: 'Move',
+    });
+    if (notes === null) return;
     const res = await fetch(`/api/candidates/${candidateId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -231,12 +260,18 @@ const totalSteps = pipeline.length || 1;
     if (res.ok) window.location.reload();
     else {
       const err = await res.json().catch(() => ({}));
-      alert(err.error || 'Failed to update stage.');
+      window.hvToast(err.error || 'Failed to update stage.', 'error');
     }
   });
 
   document.getElementById('reject-btn')?.addEventListener('click', async () => {
-    if (!confirm('Reject this candidate? This is a terminal action and cannot be undone.')) return;
+    const ok = await window.hvConfirm({
+      title: 'Reject candidate',
+      message: 'Reject this candidate? This is a terminal action and cannot be undone.',
+      confirmLabel: 'Reject',
+      destructive: true,
+    });
+    if (!ok) return;
     const res = await fetch(`/api/candidates/${candidateId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -245,7 +280,7 @@ const totalSteps = pipeline.length || 1;
     if (res.ok) window.location.reload();
     else {
       const err = await res.json().catch(() => ({}));
-      alert(err.error || 'Failed to reject candidate.');
+      window.hvToast(err.error || 'Failed to reject candidate.', 'error');
     }
   });
 </script>

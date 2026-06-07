@@ -266,9 +266,15 @@ const iconSvgByKey = Object.fromEntries(iconKeys.map(k => [k, getIconSvg(k)]));
   });
 
   document.getElementById('delete-btn')?.addEventListener('click', async () => {
-    if (!confirm('Delete this job and all its candidates? This cannot be undone.')) return;
+    const ok = await window.hvConfirm({
+      title: 'Delete job',
+      message: 'Delete this job and all its candidates? This cannot be undone.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
     const res = await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' });
     if (res.ok) window.location.href = '/jobs';
-    else alert('Failed to delete.');
+    else window.hvToast('Failed to delete.', 'error');
   });
 </script>

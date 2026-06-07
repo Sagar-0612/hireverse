@@ -249,20 +249,26 @@ const isCompleted = interview.status === 'completed';
       window.location.reload();
     } else {
       const err = await res.json();
-      alert(err.error || 'Failed to complete interview.');
+      window.hvToast(err.error || 'Failed to complete interview.', 'error');
       btn.disabled = false;
       btn.textContent = 'Save & Complete';
     }
   });
 
   document.getElementById('cancel-btn')?.addEventListener('click', async () => {
-    if (!confirm('Cancel this interview?')) return;
+    const ok = await window.hvConfirm({
+      title: 'Cancel interview',
+      message: 'Cancel this interview?',
+      confirmLabel: 'Cancel interview',
+      destructive: true,
+    });
+    if (!ok) return;
     const res = await fetch(`/api/interviews/${interviewId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'cancelled' }),
     });
     if (res.ok) window.location.reload();
-    else alert('Failed.');
+    else window.hvToast('Failed.', 'error');
   });
 </script>

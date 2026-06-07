@@ -316,7 +316,7 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      alert(err.error || 'Failed to update stage');
+      window.hvToast(err.error || 'Failed to update stage', 'error');
     }
     window.location.reload();
   }
@@ -325,7 +325,13 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
   async function rejectCandidate(btn) {
     const id = btn.dataset.candId;
     const name = btn.dataset.candName;
-    if (!confirm(`Reject ${name}? This cannot be undone.`)) return;
+    const ok = await window.hvConfirm({
+      title: 'Reject candidate',
+      message: `Reject ${name}? This cannot be undone.`,
+      confirmLabel: 'Reject',
+      destructive: true,
+    });
+    if (!ok) return;
     const res = await fetch(`/api/candidates/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -333,7 +339,7 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      alert(err.error || 'Failed to reject candidate');
+      window.hvToast(err.error || 'Failed to reject candidate', 'error');
     }
     window.location.reload();
   }

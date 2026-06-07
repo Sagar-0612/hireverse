@@ -254,7 +254,7 @@ const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } 
 
   document.getElementById('upload-submit')?.addEventListener('click', async () => {
     const jobId = document.getElementById('modal-job-select')?.value;
-    if (!jobId || !selectedFiles.length) { alert('Please select a job and at least one file.'); return; }
+    if (!jobId || !selectedFiles.length) { window.hvToast('Please select a job and at least one file.', 'error'); return; }
 
     uploadSubmit.disabled = true;
     uploadProgress.style.display = 'block';
