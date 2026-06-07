@@ -35,7 +35,7 @@ export const PUT: APIRoute = async ({ params, request }) => {
     if (!existing) return json({ error: 'Not found' }, 404);
 
     let pipelineChanged = false;
-    if (body.pipeline) {
+    if (body.pipeline !== undefined) {
       const pipeline = body.pipeline;
       if (!Array.isArray(pipeline) || pipeline.length === 0) {
         return json({ error: 'A pipeline needs at least one stage' }, 400);
@@ -74,7 +74,7 @@ export const PUT: APIRoute = async ({ params, request }) => {
       type: pipelineChanged ? 'stage' : 'job',
       action: pipelineChanged ? 'pipeline_updated' : 'job_updated',
       message: pipelineChanged
-        ? `Hiring pipeline for "${job.title}" was updated (${job.pipeline.length} stages)`
+        ? `Hiring pipeline for "${job.title}" was updated (${(job.pipeline || []).length} stages)`
         : `Job "${job.title}" was updated`,
       entityType: 'job',
       entityId: job._id.toString(),

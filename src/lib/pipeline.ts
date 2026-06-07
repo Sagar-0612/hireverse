@@ -64,7 +64,7 @@ export function buildDefaultPipeline(): PipelineStage[] {
 }
 
 export function sortedPipeline(pipeline: PipelineStage[] = []): PipelineStage[] {
-  return [...pipeline].sort((a, b) => a.order - b.order);
+  return [...(pipeline || [])].sort((a, b) => a.order - b.order);
 }
 
 export function findStage(pipeline: PipelineStage[] = [], key: string): PipelineStage | undefined {
