@@ -1,0 +1,150 @@
+---
+import AppLayout from "../../layouts/AppLayout.astro";
+import { connectDB } from "../../db/connection";
+import { Job } from "../../db/models/Job";
+import { Candidate } from "../../db/models/Candidate";
+
+await connectDB();
+const rawJobs = await Job.find().sort({ createdAt: -1 }).lean();
+const jobs = await Promise.all(rawJobs.map(async j => ({
+  id: j._id.toString(),
+  title: j.title,
+  department: j.department,
+  location: j.location,
+  status: j.status,
+  created: new Date(j.createdAt).toISOString().split('T')[0],
+  applicants: await Candidate.countDocuments({ jobId: j._id }),
+})));
+---
+
+<AppLayout title="Jobs" activeNav="jobs">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:28px;flex-wrap:wrap;">
+    <div>
+      <h1 style="font-size:24px;font-weight:600;color:var(--fg);letter-spacing:-0.5px;margin:0 0 4px;">Jobs</h1>
+      <p style="font-size:14px;color:var(--fg-mute);margin:0;">{jobs.length} total · {jobs.filter(j => j.status === 'active').length} active</p>
+    </div>
+    <a href="/jobs/new" class="btn btn-primary">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      Create Job
+    </a>
+  </div>
+
+  <!-- Filters -->
+  <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center;">
+    <div class="search-wrap" style="flex:1;min-width:200px;max-width:320px;">
+      <span class="search-icon"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"><circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.5"/><path d="M9 9l2.5 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+      <input id="jobs-search" type="text" class="input search-input" placeholder="Search jobs…" />
+    </div>
+    <select id="dept-filter" class="select" style="width:160px;">
+      <option value="">All Departments</option>
+      {[...new Set(jobs.map(j => j.department))].map(d => <option>{d}</option>)}
+    </select>
+    <select id="status-filter" class="select" style="width:140px;">
+      <option value="">All Status</option>
+      <option value="active">Active</option>
+      <option value="interviewing">Interviewing</option>
+      <option value="closed">Closed</option>
+      <option value="archived">Archived</option>
+    </select>
+    <div style="margin-left:auto;font-size:13px;color:var(--fg-mute);" id="jobs-count">{jobs.length} results</div>
+  </div>
+
+  <!-- Table -->
+  <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
+    <div class="table-container">
+      <table id="jobs-table">
+        <thead>
+          <tr>
+            <th>Job Title</th>
+            <th>Department</th>
+            <th>Location</th>
+            <th>Applicants</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th style="text-align:right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {jobs.map(job => (
+            <tr data-title={job.title.toLowerCase()} data-dept={job.department} data-status={job.status}>
+              <td><a href={`/jobs/${job.id}`} style="font-weight:500;color:var(--fg);text-decoration:none;">{job.title}</a></td>
+              <td style="color:var(--fg-mute);">{job.department}</td>
+              <td style="color:var(--fg-mute);">{job.location}</td>
+              <td><span style="font-weight:600;color:var(--fg);font-family:'JetBrains Mono',monospace;">{job.applicants}</span></td>
+              <td>
+                <span class={`badge ${job.status === 'active' ? 'badge-success' : job.status === 'interviewing' ? 'badge-info' : job.status === 'closed' ? 'badge-neutral' : 'badge-warning'}`}>
+                  {job.status}
+                </span>
+              </td>
+              <td style="color:var(--fg-mute);font-family:'JetBrains Mono',monospace;font-size:12px;">{job.created}</td>
+              <td>
+                <div style="display:flex;gap:4px;justify-content:flex-end;">
+                  <a href={`/jobs/${job.id}`} class="btn btn-ghost btn-sm">View</a>
+                  <a href={`/jobs/${job.id}/edit`} class="btn btn-ghost btn-sm">Edit</a>
+                  <button class="btn btn-ghost btn-sm" data-job-id={job.id} onclick="archiveJob(this)">Archive</button>
+                  <button class="btn btn-ghost btn-sm" style="color:#ee0000;" data-job-id={job.id} onclick="deleteJob(this)">Delete</button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {jobs.length === 0 && (
+        <div class="empty-state" style="padding:48px;">
+          <svg width="40" height="40" viewBox="0 0 40 40" fill="none" style="margin-bottom:12px;opacity:0.3;"><rect x="5" y="12" width="30" height="22" rx="3" stroke="currentColor" stroke-width="2"/><path d="M12 12V10a8 8 0 0 1 16 0v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <div style="font-size:15px;font-weight:500;color:var(--fg);margin-bottom:4px;">No jobs yet</div>
+          <a href="/jobs/new" class="btn btn-primary btn-sm" style="margin-top:12px;">Create your first job</a>
+        </div>
+      )}
+    </div>
+  </div>
+</AppLayout>
+
+<script>
+  const searchInput = document.getElementById('jobs-search') as HTMLInputElement;
+  const deptFilter = document.getElementById('dept-filter') as HTMLSelectElement;
+  const statusFilter = document.getElementById('status-filter') as HTMLSelectElement;
+  const countEl = document.getElementById('jobs-count');
+
+  function filterJobs() {
+    const q = searchInput.value.toLowerCase();
+    const dept = deptFilter.value;
+    const status = statusFilter.value;
+    let visible = 0;
+    document.querySelectorAll<HTMLTableRowElement>('#jobs-table tbody tr').forEach(row => {
+      const match = (!q || (row.dataset.title || '').includes(q))
+        && (!dept || row.dataset.dept === dept)
+        && (!status || row.dataset.status === status);
+      row.style.display = match ? '' : 'none';
+      if (match) visible++;
+    });
+    if (countEl) countEl.textContent = `${visible} results`;
+  }
+
+  searchInput?.addEventListener('input', filterJobs);
+  deptFilter?.addEventListener('change', filterJobs);
+  statusFilter?.addEventListener('change', filterJobs);
+
+  async function archiveJob(btn: HTMLButtonElement) {
+    const id = btn.dataset.jobId;
+    if (!confirm('Archive this job?')) return;
+    const res = await fetch(`/api/jobs/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'archived' }),
+    });
+    if (res.ok) window.location.reload();
+    else alert('Failed to archive job.');
+  }
+
+  async function deleteJob(btn: HTMLButtonElement) {
+    const id = btn.dataset.jobId;
+    if (!confirm('Delete this job and all its candidates? This cannot be undone.')) return;
+    const res = await fetch(`/api/jobs/${id}`, { method: 'DELETE' });
+    if (res.ok) window.location.reload();
+    else alert('Failed to delete job.');
+  }
+
+  (window as any).archiveJob = archiveJob;
+  (window as any).deleteJob = deleteJob;
+</script>

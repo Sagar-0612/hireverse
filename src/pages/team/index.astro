@@ -1,0 +1,227 @@
+---
+import AppLayout from "../../layouts/AppLayout.astro";
+import { connectDB } from "../../db/connection";
+import { Team } from "../../db/models/Team";
+import { Interview } from "../../db/models/Interview";
+
+await connectDB();
+const rawMembers = await Team.find().sort({ name: 1 }).lean();
+
+// Count interviews this month per interviewer name
+const monthStart = new Date();
+monthStart.setDate(1);
+monthStart.setHours(0, 0, 0, 0);
+const ivRaw = await Interview.aggregate([
+  { $match: { createdAt: { $gte: monthStart } } },
+  { $group: { _id: '$interviewer', count: { $sum: 1 } } },
+]);
+const ivMap = Object.fromEntries(ivRaw.map(r => [r._id, r.count]));
+
+const members = rawMembers.map(m => ({
+  id: m._id.toString(),
+  name: m.name,
+  email: m.email,
+  role: m.role,
+  department: m.department,
+  status: m.status,
+  interviewsThisMonth: ivMap[m.name] || 0,
+}));
+---
+
+<AppLayout title="Team" activeNav="team">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:28px;flex-wrap:wrap;">
+    <div>
+      <h1 style="font-size:24px;font-weight:600;color:var(--fg);letter-spacing:-0.5px;margin:0 0 4px;">Team</h1>
+      <p style="font-size:14px;color:var(--fg-mute);margin:0;">{members.length} members · {members.filter(m => m.status === 'active').length} active</p>
+    </div>
+    <button id="invite-btn" class="btn btn-primary btn-sm">
+      <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 1v11M1 6.5h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      Add Member
+    </button>
+  </div>
+
+  <div class="tabs">
+    <a href="#all" class="tab active" data-tab="all">All ({members.length})</a>
+    <a href="#recruiters" class="tab" data-tab="recruiters">Recruiters ({members.filter(m => m.role === 'Recruiter').length})</a>
+    <a href="#managers" class="tab" data-tab="managers">Hiring Managers ({members.filter(m => m.role === 'Hiring Manager').length})</a>
+    <a href="#interviewers" class="tab" data-tab="interviewers">Interviewers ({members.filter(m => m.role === 'Technical Interviewer').length})</a>
+  </div>
+
+  {['all','recruiters','managers','interviewers'].map((tab, ti) => {
+    const filtered = tab === 'all' ? members :
+      tab === 'recruiters' ? members.filter(m => m.role === 'Recruiter') :
+      tab === 'managers' ? members.filter(m => m.role === 'Hiring Manager') :
+      members.filter(m => m.role === 'Technical Interviewer');
+    return (
+      <div id={`tab-${tab}`} class="tab-pane" style={ti > 0 ? 'display:none;' : ''}>
+        <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Member</th><th>Role</th><th>Department</th><th>Interviews This Month</th><th>Status</th><th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(member => (
+                  <tr data-member-id={member.id}>
+                    <td>
+                      <div style="display:flex;align-items:center;gap:10px;">
+                        <div class="avatar">{member.name.split(' ').map((n: string) => n[0]).join('')}</div>
+                        <div>
+                          <div style="font-size:13px;font-weight:500;color:var(--fg);">{member.name}</div>
+                          <div style="font-size:11px;color:var(--fg-mute);">{member.email}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td style="color:var(--fg-body);">{member.role}</td>
+                    <td style="color:var(--fg-mute);">{member.department}</td>
+                    <td style="font-family:'JetBrains Mono',monospace;font-size:13px;">{member.interviewsThisMonth}</td>
+                    <td>
+                      <span class={`badge ${member.status === 'active' ? 'badge-success' : 'badge-neutral'}`}>{member.status}</span>
+                    </td>
+                    <td>
+                      <div style="display:flex;gap:4px;">
+                        <button class="btn btn-ghost btn-sm toggle-status-btn" data-id={member.id} data-status={member.status}>
+                          {member.status === 'active' ? 'Deactivate' : 'Activate'}
+                        </button>
+                        <button class="btn btn-ghost btn-sm delete-member-btn" data-id={member.id} style="color:var(--fg-mute);">Remove</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {filtered.length === 0 && (
+              <div class="empty-state" style="padding:32px;">No members in this group.</div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  })}
+
+  <!-- Add Member Modal -->
+  <div id="invite-modal" style="display:none;position:fixed;inset:0;z-index:100;align-items:center;justify-content:center;">
+    <div style="position:absolute;inset:0;background:rgba(0,0,0,0.6);" id="invite-overlay"></div>
+    <div class="card shadow-lvl-5" style="position:relative;z-index:1;width:440px;max-width:calc(100vw - 32px);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+        <h2 style="font-size:16px;font-weight:600;color:var(--fg);margin:0;">Add Team Member</h2>
+        <button id="close-invite" class="btn btn-ghost" style="padding:0;width:28px;height:28px;">✕</button>
+      </div>
+      <div id="invite-error" style="display:none;background:var(--bg-soft);border:1px solid #ee0000;border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:13px;color:#ee0000;"></div>
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div>
+          <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Full Name <span style="color:#ee0000;">*</span></label>
+          <input id="invite-name" type="text" class="input" placeholder="e.g. Priya Kapoor" />
+        </div>
+        <div>
+          <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Email <span style="color:#ee0000;">*</span></label>
+          <input id="invite-email" type="email" class="input" placeholder="colleague@company.com" />
+        </div>
+        <div>
+          <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Role</label>
+          <select id="invite-role" class="select">
+            <option value="Recruiter">Recruiter</option>
+            <option value="Hiring Manager">Hiring Manager</option>
+            <option value="Technical Interviewer">Technical Interviewer</option>
+            <option value="HR Manager">HR Manager</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Department</label>
+          <input id="invite-dept" type="text" class="input" placeholder="e.g. Engineering" />
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+        <button id="cancel-invite" class="btn btn-secondary">Cancel</button>
+        <button id="confirm-invite" class="btn btn-primary">Add Member</button>
+      </div>
+    </div>
+  </div>
+</AppLayout>
+
+<script>
+  // Tabs
+  document.querySelectorAll<HTMLAnchorElement>('.tab[data-tab]').forEach(tab => {
+    tab.addEventListener('click', (e) => {
+      e.preventDefault();
+      const target = tab.dataset.tab;
+      document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll<HTMLDivElement>('.tab-pane').forEach(p => {
+        p.style.display = p.id === `tab-${target}` ? '' : 'none';
+      });
+    });
+  });
+
+  // Invite modal
+  const modal = document.getElementById('invite-modal');
+  function openModal() { if (modal) modal.style.display = 'flex'; }
+  function closeModal() { if (modal) modal.style.display = 'none'; }
+
+  document.getElementById('invite-btn')?.addEventListener('click', openModal);
+  ['close-invite','cancel-invite','invite-overlay'].forEach(id => {
+    document.getElementById(id)?.addEventListener('click', closeModal);
+  });
+
+  document.getElementById('confirm-invite')?.addEventListener('click', async () => {
+    const name = (document.getElementById('invite-name') as HTMLInputElement).value.trim();
+    const email = (document.getElementById('invite-email') as HTMLInputElement).value.trim();
+    const role = (document.getElementById('invite-role') as HTMLSelectElement).value;
+    const department = (document.getElementById('invite-dept') as HTMLInputElement).value.trim();
+    const errEl = document.getElementById('invite-error') as HTMLElement;
+
+    if (!name || !email) {
+      errEl.textContent = 'Name and email are required.';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    const btn = document.getElementById('confirm-invite') as HTMLButtonElement;
+    btn.disabled = true;
+    btn.textContent = 'Adding…';
+    errEl.style.display = 'none';
+
+    const res = await fetch('/api/team', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email, role, department }),
+    });
+
+    if (res.ok) {
+      window.location.reload();
+    } else {
+      const err = await res.json();
+      errEl.textContent = err.error || 'Failed to add member.';
+      errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Add Member';
+    }
+  });
+
+  // Toggle status
+  document.querySelectorAll<HTMLButtonElement>('.toggle-status-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      const newStatus = btn.dataset.status === 'active' ? 'inactive' : 'active';
+      const res = await fetch(`/api/team/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (res.ok) window.location.reload();
+    });
+  });
+
+  // Delete member
+  document.querySelectorAll<HTMLButtonElement>('.delete-member-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Remove this team member?')) return;
+      const id = btn.dataset.id;
+      const res = await fetch(`/api/team/${id}`, { method: 'DELETE' });
+      if (res.ok) window.location.reload();
+      else alert('Failed to remove member.');
+    });
+  });
+</script>

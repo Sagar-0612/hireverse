@@ -1,0 +1,259 @@
+---
+import AppLayout from "../../layouts/AppLayout.astro";
+import { connectDB } from "../../db/connection";
+import { Interview } from "../../db/models/Interview";
+import { Types } from "mongoose";
+
+const { id } = Astro.params;
+if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/interviews');
+
+await connectDB();
+const raw = await Interview.findById(id)
+  .populate('candidateId', 'name')
+  .populate('jobId', 'title')
+  .lean();
+if (!raw) return Astro.redirect('/interviews');
+
+const interview = {
+  ...raw,
+  id: raw._id.toString(),
+  candidateName: (raw.candidateId as any)?.name || 'Unknown',
+  candidateId: (raw.candidateId as any)?._id?.toString() || '',
+  jobTitle: (raw.jobId as any)?.title || '',
+  jobId: (raw.jobId as any)?._id?.toString() || '',
+};
+
+const isCompleted = interview.status === 'completed';
+---
+
+<AppLayout title={`${interview.candidateName} · Interview`} activeNav="interviews">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:28px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <a href="/interviews" class="btn btn-ghost btn-sm" style="padding:0;width:28px;height:28px;border-radius:6px;border:1px solid var(--border);">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2L4 7l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      <div>
+        <h1 style="font-size:22px;font-weight:600;color:var(--fg);letter-spacing:-0.4px;margin:0;">Interview Details</h1>
+        <p style="font-size:13px;color:var(--fg-mute);margin:4px 0 0;">{interview.candidateName} · {interview.round}</p>
+      </div>
+    </div>
+    {!isCompleted && (
+      <button id="complete-btn" class="btn btn-primary btn-sm">Mark as Completed</button>
+    )}
+  </div>
+
+  <div class="card shadow-lvl-2" style="margin-bottom:20px;display:flex;gap:24px;flex-wrap:wrap;align-items:center;padding:20px 24px;">
+    <div class="avatar" style="width:44px;height:44px;font-size:16px;">{interview.candidateName.split(' ').map((n: string) => n[0]).join('')}</div>
+    <div style="flex:1;min-width:0;">
+      <div style="font-size:16px;font-weight:600;color:var(--fg);">{interview.candidateName}</div>
+      <div style="font-size:13px;color:var(--fg-body);">{interview.jobTitle} · {interview.round}</div>
+    </div>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;">
+      <div style="text-align:center;">
+        <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;margin-bottom:4px;">Date</div>
+        <div style="font-size:14px;font-weight:500;color:var(--fg);font-family:'JetBrains Mono',monospace;">{interview.date}</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;margin-bottom:4px;">Time</div>
+        <div style="font-size:14px;font-weight:500;color:var(--fg);">{interview.time}</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;margin-bottom:4px;">Duration</div>
+        <div style="font-size:14px;font-weight:500;color:var(--fg);">{interview.duration} min</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;margin-bottom:4px;">Interviewer</div>
+        <div style="font-size:14px;font-weight:500;color:var(--fg);">{interview.interviewer}</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;margin-bottom:4px;">Format</div>
+        <div style="font-size:14px;font-weight:500;color:var(--fg);">{interview.format}</div>
+      </div>
+    </div>
+    <span class={`badge ${isCompleted ? 'badge-success' : interview.status === 'cancelled' ? 'badge-error' : 'badge-info'}`} style="font-size:13px;padding:4px 12px;">{interview.status}</span>
+  </div>
+
+  {isCompleted ? (
+    <div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:20px;">
+        <div class="stat-card shadow-lvl-2" style="text-align:center;">
+          <div class="stat-label">Communication</div>
+          <div class="stat-value">{interview.commScore}</div>
+          <div class="progress" style="margin-top:8px;"><div class="progress-bar" style={`width:${interview.commScore}%`}></div></div>
+        </div>
+        <div class="stat-card shadow-lvl-2" style="text-align:center;">
+          <div class="stat-label">Technical</div>
+          <div class="stat-value">{interview.techScore}</div>
+          <div class="progress" style="margin-top:8px;"><div class="progress-bar" style={`width:${interview.techScore}%`}></div></div>
+        </div>
+        <div class="stat-card shadow-lvl-2" style="text-align:center;">
+          <div class="stat-label">Confidence</div>
+          <div class="stat-value">{interview.confidenceScore}</div>
+          <div class="progress" style="margin-top:8px;"><div class="progress-bar" style={`width:${interview.confidenceScore}%`}></div></div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 320px;gap:20px;align-items:start;">
+        <div class="card shadow-lvl-2">
+          <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Summary</h2>
+          {interview.transcriptSummary ? (
+            <div style="background:var(--bg-soft);border-radius:6px;padding:16px;border-left:3px solid var(--fg);">
+              <p style="font-size:14px;color:var(--fg-body);line-height:1.6;margin:0;">{interview.transcriptSummary}</p>
+            </div>
+          ) : (
+            <p style="font-size:13px;color:var(--fg-mute);">No summary recorded.</p>
+          )}
+          {interview.notes && (
+            <div style="margin-top:16px;">
+              <h3 style="font-size:12px;font-weight:600;color:var(--fg-mute);margin:0 0 8px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Interviewer Notes</h3>
+              <p style="font-size:13px;color:var(--fg-body);line-height:1.6;margin:0;">{interview.notes}</p>
+            </div>
+          )}
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px;">
+          <div class="card shadow-lvl-2">
+            <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Final Recommendation</h3>
+            <div style="font-size:18px;font-weight:600;color:var(--fg);margin-bottom:8px;">{interview.recommendation || 'Not set'}</div>
+            <span class={`badge ${interview.recommendation?.includes('Strong') ? 'badge-success' : 'badge-neutral'}`} style="font-size:12px;padding:4px 12px;">{interview.recommendation || '—'}</span>
+          </div>
+          <div class="card shadow-lvl-2">
+            <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Next Steps</h3>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <a href={`/interviews/schedule?candidate=${interview.candidateId}`} class="btn btn-primary" style="width:100%;border-radius:6px;">Schedule Next Round</a>
+              <a href={`/candidates/${interview.candidateId}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">View Candidate</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : (
+    <div style="display:grid;grid-template-columns:1fr 320px;gap:20px;align-items:start;">
+      <div class="card shadow-lvl-2">
+        <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Interview Guide</h2>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          {[
+            "Review the candidate's resume and AI analysis before the session.",
+            "Begin with a brief intro and role overview (5 min).",
+            "Technical deep-dive: system design or coding exercise (30–40 min).",
+            "Behavioral questions: communication, collaboration, growth mindset (15 min).",
+            "Candidate Q&A (5–10 min).",
+            "Submit feedback within 24 hours on HireVerse AI.",
+          ].map((step, i) => (
+            <div style="display:flex;gap:12px;align-items:flex-start;">
+              <div style="width:22px;height:22px;border-radius:50%;background:var(--bg-soft);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;flex-shrink:0;margin-top:1px;border:1px solid var(--border);">{i + 1}</div>
+              <div style="font-size:13px;color:var(--fg-body);line-height:1.5;">{step}</div>
+            </div>
+          ))}
+        </div>
+        {interview.notes && (
+          <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+            <div style="font-size:12px;font-weight:600;color:var(--fg-mute);margin-bottom:6px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Notes</div>
+            <p style="font-size:13px;color:var(--fg-body);line-height:1.5;margin:0;">{interview.notes}</p>
+          </div>
+        )}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div class="card shadow-lvl-2">
+          <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Actions</h3>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <button id="complete-btn-side" class="btn btn-primary" style="width:100%;border-radius:6px;">Mark as Completed</button>
+            <button id="cancel-btn" class="btn btn-ghost" style="width:100%;color:#ee0000;">Cancel Interview</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )}
+
+  <!-- Complete modal -->
+  <div id="complete-modal" style="display:none;position:fixed;inset:0;z-index:100;align-items:center;justify-content:center;">
+    <div style="position:absolute;inset:0;background:rgba(0,0,0,0.6);" id="modal-overlay"></div>
+    <div class="card shadow-lvl-5" style="position:relative;z-index:1;width:480px;max-width:calc(100vw - 32px);">
+      <h2 style="font-size:16px;font-weight:600;color:var(--fg);margin:0 0 20px;">Complete Interview</h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">
+        <div>
+          <label style="font-size:12px;font-weight:500;color:var(--fg-mute);display:block;margin-bottom:6px;">Comm Score (0-100)</label>
+          <input id="comm-score" type="number" min="0" max="100" class="input" value="75" />
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:500;color:var(--fg-mute);display:block;margin-bottom:6px;">Tech Score (0-100)</label>
+          <input id="tech-score" type="number" min="0" max="100" class="input" value="75" />
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:500;color:var(--fg-mute);display:block;margin-bottom:6px;">Confidence (0-100)</label>
+          <input id="conf-score" type="number" min="0" max="100" class="input" value="75" />
+        </div>
+      </div>
+      <div style="margin-bottom:16px;">
+        <label style="font-size:12px;font-weight:500;color:var(--fg-mute);display:block;margin-bottom:6px;">Recommendation</label>
+        <select id="recommendation" class="select">
+          <option value="Strongly Recommend">Strongly Recommend</option>
+          <option value="Recommend" selected>Recommend</option>
+          <option value="Neutral">Neutral</option>
+          <option value="Do Not Recommend">Do Not Recommend</option>
+        </select>
+      </div>
+      <div style="margin-bottom:20px;">
+        <label style="font-size:12px;font-weight:500;color:var(--fg-mute);display:block;margin-bottom:6px;">Summary / Notes</label>
+        <textarea id="transcript-summary" class="input" style="height:90px;padding:10px 12px;resize:vertical;" placeholder="Key observations, highlights, concerns…"></textarea>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button id="modal-cancel" class="btn btn-secondary">Cancel</button>
+        <button id="modal-save" class="btn btn-primary">Save & Complete</button>
+      </div>
+    </div>
+  </div>
+</AppLayout>
+
+<script define:vars={{ interviewId: interview.id }}>
+  const modal = document.getElementById('complete-modal');
+
+  function openModal() { modal.style.display = 'flex'; }
+  function closeModal() { modal.style.display = 'none'; }
+
+  document.getElementById('complete-btn')?.addEventListener('click', openModal);
+  document.getElementById('complete-btn-side')?.addEventListener('click', openModal);
+  document.getElementById('modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('modal-overlay')?.addEventListener('click', closeModal);
+
+  document.getElementById('modal-save')?.addEventListener('click', async () => {
+    const btn = document.getElementById('modal-save');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+
+    const payload = {
+      status: 'completed',
+      commScore: Number(document.getElementById('comm-score').value),
+      techScore: Number(document.getElementById('tech-score').value),
+      confidenceScore: Number(document.getElementById('conf-score').value),
+      recommendation: document.getElementById('recommendation').value,
+      transcriptSummary: document.getElementById('transcript-summary').value,
+    };
+
+    const res = await fetch(`/api/interviews/${interviewId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+      window.location.reload();
+    } else {
+      const err = await res.json();
+      alert(err.error || 'Failed to complete interview.');
+      btn.disabled = false;
+      btn.textContent = 'Save & Complete';
+    }
+  });
+
+  document.getElementById('cancel-btn')?.addEventListener('click', async () => {
+    if (!confirm('Cancel this interview?')) return;
+    const res = await fetch(`/api/interviews/${interviewId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'cancelled' }),
+    });
+    if (res.ok) window.location.reload();
+    else alert('Failed.');
+  });
+</script>

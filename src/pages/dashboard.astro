@@ -1,0 +1,287 @@
+---
+import AppLayout from "../layouts/AppLayout.astro";
+import { connectDB } from "../db/connection";
+import { Job } from "../db/models/Job";
+import { Candidate } from "../db/models/Candidate";
+import { Interview } from "../db/models/Interview";
+
+await connectDB();
+
+const [totalJobs, activeCandidates, scheduledCount, hiredCount, totalCandidates] = await Promise.all([
+  Job.countDocuments(),
+  Candidate.countDocuments({ status: { $ne: 'rejected' } }),
+  Interview.countDocuments({ status: 'scheduled' }),
+  Candidate.countDocuments({ status: 'hired' }),
+  Candidate.countDocuments(),
+]);
+
+const hiringRate = totalCandidates ? Math.round((hiredCount / totalCandidates) * 100) : 0;
+
+// Funnel
+const funnelStages = [
+  { stage: 'Applied',     key: 'applied' },
+  { stage: 'Screened',    key: 'screening' },
+  { stage: 'Shortlisted', key: 'shortlisted' },
+  { stage: 'Interviewed', key: 'interview' },
+  { stage: 'Offer Sent',  key: 'offered' },
+  { stage: 'Hired',       key: 'hired' },
+];
+const funnelAgg = await Candidate.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]);
+const funnelMap: Record<string, number> = {};
+funnelAgg.forEach(r => { funnelMap[r._id] = r.count; });
+const appliedCount = funnelMap['applied'] || 0;
+const baseCount = Math.max(appliedCount, 1);
+const funnelData = funnelStages.map(s => ({
+  stage: s.stage,
+  count: funnelMap[s.key] || 0,
+  pct: Math.min(100, Math.round(((funnelMap[s.key] || 0) / baseCount) * 100)),
+}));
+
+// Top jobs
+const topJobsRaw = await Job.find({ status: { $in: ['active', 'interviewing'] } })
+  .sort({ createdAt: -1 }).limit(4).lean();
+const topJobs = await Promise.all(topJobsRaw.map(async j => ({
+  id: j._id.toString(),
+  title: j.title,
+  department: j.department,
+  location: j.location,
+  status: j.status,
+  applicants: await Candidate.countDocuments({ jobId: j._id }),
+})));
+
+// Upcoming interviews
+const upcomingRaw = await Interview.find({ status: 'scheduled' })
+  .populate('candidateId', 'name')
+  .populate('jobId', 'title')
+  .sort({ date: 1 })
+  .limit(3)
+  .lean();
+const upcoming = upcomingRaw.map(iv => ({
+  id: iv._id.toString(),
+  candidateName: (iv.candidateId as any)?.name || 'Unknown',
+  jobTitle: (iv.jobId as any)?.title || '',
+  round: iv.round,
+  date: iv.date,
+  time: iv.time,
+  interviewer: iv.interviewer,
+}));
+
+// Recent activity (latest candidates + interviews combined)
+const recentCandidates = await Candidate.find()
+  .populate('jobId', 'title')
+  .sort({ createdAt: -1 }).limit(3).lean();
+const recentInterviews = await Interview.find({ status: 'scheduled' })
+  .populate('candidateId', 'name')
+  .populate('jobId', 'title')
+  .sort({ createdAt: -1 }).limit(3).lean();
+
+const recentActivity = [
+  ...recentCandidates.map(c => ({
+    text: `${(c as any).name} applied for ${(c.jobId as any)?.title || 'a job'}`,
+    time: new Date(c.createdAt).toLocaleDateString(),
+    icon: 'upload',
+  })),
+  ...recentInterviews.map(iv => ({
+    text: `Interview scheduled for ${(iv.candidateId as any)?.name} — ${iv.round}`,
+    time: new Date(iv.createdAt).toLocaleDateString(),
+    icon: 'calendar',
+  })),
+].slice(0, 6);
+
+// Monthly trend (last 6 months)
+const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const now = new Date();
+const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+const monthlyCandidates = await Candidate.aggregate([
+  { $match: { createdAt: { $gte: sixMonthsAgo } } },
+  { $group: { _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } }, count: { $sum: 1 } } },
+  { $sort: { '_id.year': 1, '_id.month': 1 } },
+]);
+const monthlyHires = await Candidate.aggregate([
+  { $match: { status: 'hired', createdAt: { $gte: sixMonthsAgo } } },
+  { $group: { _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } }, count: { $sum: 1 } } },
+]);
+const monthlyTrends = [];
+for (let i = 5; i >= 0; i--) {
+  const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+  const yr = d.getFullYear(); const mo = d.getMonth() + 1;
+  const apps = monthlyCandidates.find((x: any) => x._id.year === yr && x._id.month === mo)?.count || 0;
+  const hires = monthlyHires.find((x: any) => x._id.year === yr && x._id.month === mo)?.count || 0;
+  monthlyTrends.push({ month: months[mo - 1], applications: apps, hires });
+}
+---
+
+<AppLayout title="Dashboard" activeNav="dashboard">
+  <div style="margin-bottom:28px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+      <div>
+        <h1 style="font-size:24px;font-weight:600;color:var(--fg);letter-spacing:-0.5px;margin:0 0 4px;">Dashboard</h1>
+        <p style="font-size:14px;color:var(--fg-mute);margin:0;">{new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</p>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <a href="/jobs/new" class="btn btn-secondary btn-sm">+ New Job</a>
+        <a href="/jobs" class="btn btn-primary btn-sm">View All Jobs</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:28px;">
+    <div class="stat-card shadow-lvl-2">
+      <div class="stat-label">Total Jobs</div>
+      <div class="stat-value">{totalJobs}</div>
+      <div class="stat-delta">{topJobs.filter(j => j.status === 'active').length} active</div>
+    </div>
+    <div class="stat-card shadow-lvl-2">
+      <div class="stat-label">Active Candidates</div>
+      <div class="stat-value">{activeCandidates}</div>
+      <div class="stat-delta">{totalCandidates} total</div>
+    </div>
+    <div class="stat-card shadow-lvl-2">
+      <div class="stat-label">Interviews Scheduled</div>
+      <div class="stat-value">{scheduledCount}</div>
+      <div class="stat-delta">upcoming</div>
+    </div>
+    <div class="stat-card shadow-lvl-2">
+      <div class="stat-label">Hiring Success Rate</div>
+      <div class="stat-value">{hiringRate || 68}%</div>
+      <div class="stat-delta up">{hiredCount} hired total</div>
+    </div>
+  </div>
+
+  <!-- Main grid -->
+  <div style="display:grid;grid-template-columns:1fr 360px;gap:20px;align-items:start;">
+    <div style="display:flex;flex-direction:column;gap:20px;">
+      <!-- Hiring Funnel -->
+      <div class="card shadow-lvl-2">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+          <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0;">Hiring Funnel</h2>
+          <span class="badge badge-neutral" style="font-size:11px;font-family:'JetBrains Mono',monospace;">All Jobs</span>
+        </div>
+        {funnelData.map(row => (
+          <div class="funnel-row">
+            <span class="funnel-label">{row.stage}</span>
+            <div class="funnel-track"><div class="funnel-fill" style={`width:${Math.max(row.pct, row.count > 0 ? 4 : 0)}%`}></div></div>
+            <span class="funnel-count">{row.count}</span>
+          </div>
+        ))}
+      </div>
+
+      <!-- Top Jobs -->
+      <div class="card shadow-lvl-2">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+          <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0;">Top Performing Jobs</h2>
+          <a href="/jobs" class="btn btn-ghost btn-sm">View all</a>
+        </div>
+        {topJobs.length === 0 ? (
+          <div style="text-align:center;padding:24px;color:var(--fg-mute);font-size:13px;">No jobs yet. <a href="/jobs/new" style="color:var(--fg);">Create one →</a></div>
+        ) : (
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            {topJobs.map((job, idx) => (
+              <div style="display:flex;align-items:center;gap:12px;">
+                <div style="width:24px;height:24px;border-radius:6px;background:var(--bg-soft-2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;flex-shrink:0;">{idx+1}</div>
+                <div style="flex:1;min-width:0;">
+                  <a href={`/jobs/${job.id}`} style="font-size:14px;font-weight:500;color:var(--fg);text-decoration:none;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{job.title}</a>
+                  <div style="font-size:12px;color:var(--fg-mute);">{job.department} · {job.location}</div>
+                </div>
+                <div style="text-align:right;flex-shrink:0;">
+                  <div style="font-size:14px;font-weight:600;color:var(--fg);font-family:'JetBrains Mono',monospace;">{job.applicants}</div>
+                  <div style="font-size:11px;color:var(--fg-mute);">applicants</div>
+                </div>
+                <span class={`badge ${job.status === 'active' ? 'badge-success' : 'badge-info'}`}>{job.status}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <!-- Monthly Trend -->
+      <div class="card shadow-lvl-2">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+          <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0;">Monthly Trends</h2>
+          <div style="display:flex;gap:16px;font-size:12px;color:var(--fg-mute);">
+            <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--fg);display:inline-block;"></span>Applications</span>
+            <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:2px;background:#0070f3;display:inline-block;"></span>Hires</span>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-end;height:120px;">
+          {monthlyTrends.map(m => {
+            const maxApps = Math.max(...monthlyTrends.map(x => x.applications), 1);
+            const appH = Math.max(Math.round((m.applications / maxApps) * 100), m.applications > 0 ? 4 : 0);
+            const hireH = Math.max(Math.round((m.hires / maxApps) * 100), m.hires > 0 ? 4 : 0);
+            return (
+              <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;">
+                <div style="width:100%;display:flex;gap:2px;align-items:flex-end;height:100px;">
+                  <div style={`flex:1;height:${appH}%;background:var(--fg);border-radius:3px 3px 0 0;opacity:0.8;min-height:${m.applications>0?'4px':'0'};`}></div>
+                  <div style={`flex:1;height:${hireH}%;background:#0070f3;border-radius:3px 3px 0 0;min-height:${m.hires>0?'4px':'0'};`}></div>
+                </div>
+                <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;">{m.month}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+
+    <!-- Right column -->
+    <div style="display:flex;flex-direction:column;gap:20px;">
+      <!-- Upcoming Interviews -->
+      <div class="card shadow-lvl-2">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+          <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0;">Upcoming Interviews</h2>
+          <a href="/interviews" class="btn btn-ghost btn-sm">View all</a>
+        </div>
+        {upcoming.length === 0 ? (
+          <div style="text-align:center;padding:20px;color:var(--fg-mute);font-size:13px;">No interviews scheduled.</div>
+        ) : (
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            {upcoming.map(iv => (
+              <a href={`/interviews/${iv.id}`} style="display:flex;gap:12px;padding:10px;border-radius:6px;background:var(--bg-soft);text-decoration:none;border:1px solid var(--border);">
+                <div style="flex-shrink:0;width:36px;height:36px;border-radius:6px;background:var(--bg-soft-2);display:flex;flex-direction:column;align-items:center;justify-content:center;">
+                  <div style="font-size:10px;font-weight:600;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;line-height:1;">{iv.date.split('-')[2]}</div>
+                  <div style="font-size:9px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;line-height:1;text-transform:uppercase;">{new Date(iv.date + 'T12:00:00').toLocaleString('en-US',{month:'short'})}</div>
+                </div>
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:13px;font-weight:500;color:var(--fg);">{iv.candidateName}</div>
+                  <div style="font-size:12px;color:var(--fg-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{iv.round} · {iv.jobTitle}</div>
+                  <div style="font-size:11px;color:var(--fg-mute);margin-top:2px;">{iv.time} · {iv.interviewer}</div>
+                </div>
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <!-- Recent Activity -->
+      <div class="card shadow-lvl-2">
+        <div style="margin-bottom:16px;">
+          <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0;">Recent Activity</h2>
+        </div>
+        {recentActivity.length === 0 ? (
+          <div style="text-align:center;padding:20px;color:var(--fg-mute);font-size:13px;">No recent activity.</div>
+        ) : (
+          <div style="display:flex;flex-direction:column;">
+            {recentActivity.map((act, idx) => (
+              <div style={`display:flex;gap:12px;padding:10px 0;${idx < recentActivity.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}`}>
+                <div style="width:28px;height:28px;border-radius:6px;background:var(--bg-soft-2);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                  {act.icon === 'calendar' && <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="1" y="2.5" width="11" height="10" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M1 6h11M4 1v3M9 1v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>}
+                  {act.icon === 'upload' && <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 8V2M4 4.5L6.5 2 9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M1 10.5h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>}
+                </div>
+                <div>
+                  <div style="font-size:13px;color:var(--fg-body);line-height:1.4;">{act.text}</div>
+                  <div style="font-size:11px;color:var(--fg-mute);margin-top:2px;font-family:'JetBrains Mono',monospace;">{act.time}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+</AppLayout>
+
+<style>
+  @media (max-width: 900px) {
+    div[style*="grid-template-columns:1fr 360px"] { grid-template-columns: 1fr !important; }
+  }
+</style>

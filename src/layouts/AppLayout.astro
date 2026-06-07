@@ -1,0 +1,197 @@
+---
+import "../styles/global.css";
+import { connectDB } from "../db/connection";
+import { Job } from "../db/models/Job";
+import { seedDatabase } from "../db/seed";
+
+export interface Props {
+  title: string;
+  activeNav?: string;
+}
+
+const { title, activeNav = "" } = Astro.props;
+
+// Auto-seed on first request if DB is empty
+try {
+  await connectDB();
+  const count = await Job.countDocuments();
+  if (count === 0) await seedDatabase();
+} catch (_) { /* DB not available – still render */ }
+
+const navItems = [
+  { href: "/dashboard", label: "Dashboard", id: "dashboard", icon: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>` },
+  { href: "/jobs", label: "Jobs", id: "jobs", icon: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="5" width="12" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5 5V4a3 3 0 0 1 6 0v1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>` },
+  { href: "/candidates", label: "Candidates", id: "candidates", icon: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M2 14c0-3.314 2.686-5 6-5s6 1.686 6 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>` },
+  { href: "/interviews", label: "Interviews", id: "interviews", icon: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5" width="13" height="12" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M1.5 6.5h13" stroke="currentColor" stroke-width="1.5"/><path d="M5 1v3M11 1v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>` },
+  { href: "/analytics", label: "Analytics", id: "analytics", icon: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 12l3.5-4 3 2.5L12 5l2 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>` },
+  { href: "/team", label: "Team", id: "team", icon: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="5.5" cy="5" r="2.5" stroke="currentColor" stroke-width="1.5"/><circle cx="10.5" cy="5" r="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M1 14c0-2.485 2.015-4 4.5-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M9 14c0-2.485 1.015-4 3.5-4s4 1.515 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>` },
+  { href: "/settings", label: "Settings", id: "settings", icon: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v1.5M8 13.5V15M15 8h-1.5M2.5 8H1M12.364 3.636l-1.06 1.06M4.696 11.304l-1.06 1.06M12.364 12.364l-1.06-1.06M4.696 4.696l-1.06-1.06" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>` },
+];
+---
+
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title} — HireVerse AI</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <!-- Logo -->
+      <div style="padding: 16px; border-bottom: 1px solid var(--sidebar-border); flex-shrink: 0;">
+        <a href="/dashboard" style="display:flex;align-items:center;gap:10px;text-decoration:none;">
+          <div style="width:28px;height:28px;border-radius:6px;background:var(--fg);display:flex;align-items:center;justify-content:center;">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M3 8l3 3 7-7" stroke="var(--bg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div>
+            <div style="font-size:14px;font-weight:600;color:var(--fg);line-height:1.2;">HireVerse</div>
+            <div style="font-size:10px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;line-height:1;">AI Platform</div>
+          </div>
+        </a>
+      </div>
+
+      <!-- Nav -->
+      <nav style="padding: 12px 10px; flex: 1;">
+        {navItems.map(item => (
+          <a
+            href={item.href}
+            class={`nav-item ${activeNav === item.id ? "active" : ""}`}
+          >
+            <span set:html={item.icon} style="flex-shrink:0;opacity:0.7;" />
+            {item.label}
+          </a>
+        ))}
+      </nav>
+
+      <!-- User -->
+      <div style="padding: 12px 10px; border-top: 1px solid var(--sidebar-border); flex-shrink: 0;">
+        <div style="display:flex;align-items:center;gap:10px;padding:8px;border-radius:6px;cursor:pointer;" class="nav-item">
+          <div class="avatar" style="width:24px;height:24px;font-size:10px;">MK</div>
+          <div style="min-width:0;">
+            <div style="font-size:13px;font-weight:500;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Maya Kim</div>
+            <div style="font-size:11px;color:var(--fg-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Head of Talent</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="main-content">
+      <!-- Topbar -->
+      <header class="topbar">
+        <!-- Mobile menu -->
+        <button id="mobile-menu-btn" class="btn btn-ghost" style="display:none;padding:0;width:32px;" aria-label="Menu">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+
+        <!-- Search -->
+        <div class="search-wrap" style="flex:1;max-width:360px;">
+          <span class="search-icon">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.5"/><path d="M10 10l2.5 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </span>
+          <input type="text" class="input search-input" placeholder="Search jobs, candidates…" style="height:32px;font-size:13px;" />
+        </div>
+
+        <div style="flex:1;"></div>
+
+        <!-- Actions -->
+        <div style="display:flex;align-items:center;gap:8px;">
+          <!-- Notifications -->
+          <button class="btn btn-ghost" style="padding:0;width:32px;height:32px;position:relative;" aria-label="Notifications">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1a5 5 0 0 1 5 5v2l1.5 2.5H.5L2 8V6a5 5 0 0 1 5-5" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 13.5a1.5 1.5 0 0 0 3 0" stroke="currentColor" stroke-width="1.5"/></svg>
+            <span style="position:absolute;top:6px;right:6px;width:6px;height:6px;border-radius:50%;background:#ee0000;border:1.5px solid var(--bg);"></span>
+          </button>
+
+          <!-- Theme toggle -->
+          <button id="theme-toggle" class="btn btn-ghost" style="padding:0;width:32px;height:32px;" aria-label="Toggle theme">
+            <span id="icon-sun" style="display:none;">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.05 3.05l1.06 1.06M11.89 11.89l1.06 1.06M12.95 3.05l-1.06 1.06M4.11 11.89l-1.06 1.06" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </span>
+            <span id="icon-moon">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.5 10A6.5 6.5 0 0 1 6 2.5a6.5 6.5 0 1 0 7.5 7.5z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </span>
+          </button>
+
+          <!-- Avatar -->
+          <button class="btn btn-ghost" style="padding:0;border-radius:50%;" aria-label="User menu">
+            <div class="avatar">MK</div>
+          </button>
+        </div>
+      </header>
+
+      <!-- Page content -->
+      <main class="page-content">
+        <slot />
+      </main>
+    </div>
+  </div>
+
+  <!-- Overlay for mobile sidebar -->
+  <div id="sidebar-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:49;"></div>
+
+  <script>
+    // Theme persistence
+    (function() {
+      const saved = localStorage.getItem("hv-theme");
+      if (saved === "light") {
+        document.documentElement.classList.remove("dark");
+      } else {
+        document.documentElement.classList.add("dark");
+      }
+    })();
+
+    const toggle = document.getElementById("theme-toggle");
+    const iconSun = document.getElementById("icon-sun");
+    const iconMoon = document.getElementById("icon-moon");
+
+    function updateIcons() {
+      const isDark = document.documentElement.classList.contains("dark");
+      if (iconSun && iconMoon) {
+        iconSun.style.display = isDark ? "flex" : "none";
+        iconMoon.style.display = isDark ? "none" : "flex";
+      }
+    }
+    updateIcons();
+
+    toggle?.addEventListener("click", () => {
+      const isDark = document.documentElement.classList.toggle("dark");
+      localStorage.setItem("hv-theme", isDark ? "dark" : "light");
+      updateIcons();
+    });
+
+    // Mobile sidebar
+    const sidebar = document.getElementById("sidebar");
+    const overlay = document.getElementById("sidebar-overlay");
+    const menuBtn = document.getElementById("mobile-menu-btn");
+
+    menuBtn?.addEventListener("click", () => {
+      sidebar?.classList.toggle("open");
+      if (sidebar?.classList.contains("open")) {
+        overlay!.style.display = "block";
+      } else {
+        overlay!.style.display = "none";
+      }
+    });
+
+    overlay?.addEventListener("click", () => {
+      sidebar?.classList.remove("open");
+      overlay.style.display = "none";
+    });
+
+    // Show mobile menu button on small screens
+    function checkWidth() {
+      if (menuBtn) {
+        menuBtn.style.display = window.innerWidth <= 768 ? "flex" : "none";
+      }
+    }
+    checkWidth();
+    window.addEventListener("resize", checkWidth);
+  </script>
+</body>
+</html>

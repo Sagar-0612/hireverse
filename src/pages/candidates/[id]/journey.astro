@@ -1,0 +1,168 @@
+---
+import AppLayout from "../../../layouts/AppLayout.astro";
+import { connectDB } from "../../../db/connection";
+import { Candidate } from "../../../db/models/Candidate";
+import { Interview } from "../../../db/models/Interview";
+import { Types } from "mongoose";
+
+const { id } = Astro.params;
+if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/candidates');
+
+await connectDB();
+const raw = await Candidate.findById(id).populate('jobId', 'title').lean();
+if (!raw) return Astro.redirect('/candidates');
+
+const candidate = { ...raw, id: raw._id.toString(), jobTitle: (raw.jobId as any)?.title || '' };
+const applied = new Date(raw.createdAt).toISOString().split('T')[0];
+
+// Get all interviews for this candidate
+const interviews = await Interview.find({ candidateId: id }).sort({ date: 1 }).lean();
+
+const statusOrder = ['applied','screening','shortlisted','interview','offered','hired','rejected'];
+const currentStatusIdx = statusOrder.indexOf(candidate.status);
+
+const stageMap: Record<string, string> = {
+  applied:     'Applied',
+  screening:   'Screened',
+  shortlisted: 'Shortlisted',
+  interview:   'L1 Interview',
+  offered:     'Offer',
+  hired:       'Hired',
+  rejected:    'Rejected',
+};
+
+const allStages = [
+  { key: 'applied',     label: 'Applied',       systemNote: `Resume uploaded. AI analysis initiated.` },
+  { key: 'screening',   label: 'Screened',       systemNote: `AI analysis complete. Score: ${candidate.score}. Skills: ${candidate.skillsMatch}%.` },
+  { key: 'shortlisted', label: 'Shortlisted',    systemNote: 'Candidate reviewed and shortlisted for next stage.' },
+  { key: 'interview',   label: 'Interview',      systemNote: interviews.length ? `${interviews.length} interview(s) scheduled.` : 'Interview to be scheduled.' },
+  { key: 'offered',     label: 'Offer',          systemNote: 'Offer extended to candidate.' },
+  { key: 'hired',       label: 'Hired',          systemNote: 'Candidate accepted the offer. Welcome aboard!' },
+];
+
+const completedKeys = statusOrder.slice(0, currentStatusIdx + 1);
+---
+
+<AppLayout title={`${candidate.name} · Journey`} activeNav="candidates">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:28px;">
+    <a href={`/candidates/${candidate.id}`} class="btn btn-ghost btn-sm" style="padding:0;width:28px;height:28px;border-radius:6px;border:1px solid var(--border);">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2L4 7l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <div>
+      <h1 style="font-size:22px;font-weight:600;color:var(--fg);letter-spacing:-0.4px;margin:0;">Candidate Journey</h1>
+      <p style="font-size:13px;color:var(--fg-mute);margin:4px 0 0;">{candidate.name} · {candidate.jobTitle}</p>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 260px;gap:24px;align-items:start;">
+    <div class="card shadow-lvl-2">
+      <div class="timeline">
+        {allStages.map((stage, i) => {
+          const isCompleted = completedKeys.includes(stage.key);
+          const isCurrent = candidate.status === stage.key;
+          const stageInterviews = stage.key === 'interview' ? interviews : [];
+          return (
+            <div class="timeline-item" style={i === allStages.length - 1 ? 'padding-bottom:0;' : ''}>
+              <div class={`timeline-dot ${isCompleted ? 'completed' : ''}`} style={isCurrent && !isCompleted ? 'border-color:var(--fg);' : ''}>
+                {isCompleted && (
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                    <path d="M2 5l2.5 2.5 3.5-4" stroke="var(--bg)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                )}
+              </div>
+              <div style={`padding:2px 0 ${i < allStages.length - 1 ? '24px' : '0'};`}>
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
+                  <span style={`font-size:14px;font-weight:${isCompleted || isCurrent ? '600' : '400'};color:${isCompleted || isCurrent ? 'var(--fg)' : 'var(--fg-mute)'};`}>{stage.label}</span>
+                  {isCompleted && !isCurrent && <span class="badge badge-success" style="font-size:11px;">Done</span>}
+                  {isCurrent && <span class="badge badge-info" style="font-size:11px;">Current</span>}
+                  {!isCompleted && !isCurrent && <span class="badge badge-neutral" style="font-size:11px;">Pending</span>}
+                  {stage.key === 'applied' && <span style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;">{applied}</span>}
+                </div>
+                {(isCompleted || isCurrent) && (
+                  <p style="font-size:13px;color:var(--fg-body);margin:0 0 8px;line-height:1.5;">{stage.systemNote}</p>
+                )}
+                {stage.key === 'screening' && isCompleted && (
+                  <div style="display:inline-flex;align-items:center;gap:8px;background:var(--bg-soft);padding:6px 12px;border-radius:6px;border:1px solid var(--border);">
+                    <span style="font-size:11px;color:var(--fg-mute);">AI Score</span>
+                    <span style="font-size:15px;font-weight:700;color:var(--fg);font-family:'JetBrains Mono',monospace;">{candidate.score}</span>
+                    <span style="font-size:11px;color:var(--fg-mute);">·</span>
+                    <span style="font-size:11px;color:var(--fg-mute);">{candidate.recommendation}</span>
+                  </div>
+                )}
+                {stageInterviews.length > 0 && (
+                  <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">
+                    {stageInterviews.map(iv => (
+                      <a href={`/interviews/${iv._id.toString()}`} style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:6px;background:var(--bg-soft);border:1px solid var(--border);text-decoration:none;">
+                        <div>
+                          <div style="font-size:13px;font-weight:500;color:var(--fg);">{iv.round}</div>
+                          <div style="font-size:12px;color:var(--fg-mute);">{iv.date} · {iv.time} · {iv.interviewer}</div>
+                          {iv.status === 'completed' && iv.techScore > 0 && (
+                            <div style="font-size:11px;color:var(--fg-mute);margin-top:2px;font-family:'JetBrains Mono',monospace;">
+                              Tech: {iv.techScore} · Comm: {iv.commScore} · Conf: {iv.confidenceScore}
+                            </div>
+                          )}
+                        </div>
+                        <span class={`badge ${iv.status === 'completed' ? 'badge-success' : 'badge-info'} ml-auto`} style="margin-left:auto;flex-shrink:0;">{iv.status}</span>
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <div class="card shadow-lvl-2">
+        <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Current Stage</h3>
+        <div style="font-size:20px;font-weight:600;color:var(--fg);margin-bottom:4px;">{stageMap[candidate.status] || candidate.status}</div>
+        <div style="font-size:13px;color:var(--fg-mute);">Step {currentStatusIdx + 1} of {allStages.length}</div>
+        <div class="progress" style="margin-top:12px;">
+          <div class="progress-bar" style={`width:${Math.round((currentStatusIdx + 1) / allStages.length * 100)}%`}></div>
+        </div>
+      </div>
+
+      <div class="card shadow-lvl-2">
+        <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Move to Stage</h3>
+        <select id="stage-select" class="select" style="margin-bottom:10px;">
+          {statusOrder.filter(s => s !== 'rejected').map(s => (
+            <option value={s} selected={candidate.status === s}>{stageMap[s] || s}</option>
+          ))}
+        </select>
+        <button id="move-stage-btn" class="btn btn-primary" style="width:100%;border-radius:6px;">Update Stage</button>
+        <button id="reject-btn" class="btn btn-ghost" style="width:100%;color:#ee0000;margin-top:8px;">Reject Candidate</button>
+      </div>
+
+      <div class="card shadow-lvl-2">
+        <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Schedule Interview</h3>
+        <a href={`/interviews/schedule?candidate=${candidate.id}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">Schedule Next Round</a>
+      </div>
+    </div>
+  </div>
+</AppLayout>
+
+<script define:vars={{ candidateId: candidate.id }}>
+  document.getElementById('move-stage-btn')?.addEventListener('click', async () => {
+    const status = document.getElementById('stage-select').value;
+    const res = await fetch(`/api/candidates/${candidateId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (res.ok) window.location.reload();
+    else alert('Failed to update stage.');
+  });
+
+  document.getElementById('reject-btn')?.addEventListener('click', async () => {
+    if (!confirm('Mark this candidate as rejected?')) return;
+    const res = await fetch(`/api/candidates/${candidateId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'rejected' }),
+    });
+    if (res.ok) window.location.reload();
+    else alert('Failed.');
+  });
+</script>

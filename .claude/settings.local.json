@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(curl -s http://localhost:4324/api/jobs)",
+      "Bash(echo \"Jobs: $\\(curl -s http://localhost:4324/api/jobs)"
+    ]
+  }
+}

@@ -1,0 +1,398 @@
+---
+import AppLayout from "../../layouts/AppLayout.astro";
+import { connectDB } from "../../db/connection";
+import { Job } from "../../db/models/Job";
+import { Candidate } from "../../db/models/Candidate";
+import { Interview } from "../../db/models/Interview";
+import { Types } from "mongoose";
+
+const { id } = Astro.params;
+if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/jobs');
+
+await connectDB();
+const rawJob = await Job.findById(id).lean();
+if (!rawJob) return Astro.redirect('/jobs');
+
+const job = { ...rawJob, id: rawJob._id.toString(), created: new Date(rawJob.createdAt).toISOString().split('T')[0] };
+
+const rawCandidates = await Candidate.find({ jobId: id }).sort({ score: -1 }).lean();
+const jobCandidates = rawCandidates.map((c, i) => ({
+  ...c,
+  id: c._id.toString(),
+  rank: i + 1,
+  applied: new Date(c.createdAt).toISOString().split('T')[0],
+}));
+
+const rawInterviews = await Interview.find({ jobId: id })
+  .populate('candidateId', 'name')
+  .sort({ date: 1 })
+  .lean();
+const jobInterviews = rawInterviews.map(iv => ({
+  ...iv,
+  id: iv._id.toString(),
+  candidateName: (iv.candidateId as any)?.name || 'Unknown',
+  candidateId: (iv.candidateId as any)?._id?.toString() || '',
+}));
+
+// Funnel for this job
+const funnelStages = [
+  { stage: 'Applied',     key: 'applied' },
+  { stage: 'Screened',    key: 'screening' },
+  { stage: 'Shortlisted', key: 'shortlisted' },
+  { stage: 'Interview',   key: 'interview' },
+  { stage: 'Hired',       key: 'hired' },
+];
+const totalForJob = jobCandidates.length || 1;
+const funnelData = funnelStages.map(s => ({
+  stage: s.stage,
+  count: jobCandidates.filter(c => c.status === s.key).length,
+  pct: Math.min(100, Math.round((jobCandidates.filter(c => c.status === s.key).length / totalForJob) * 100)),
+}));
+
+const avgScore = jobCandidates.length ? Math.round(jobCandidates.reduce((s, c) => s + c.score, 0) / jobCandidates.length) : 0;
+const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.experience, 0) / jobCandidates.length).toFixed(1) : '0';
+---
+
+<AppLayout title={job.title} activeNav="jobs">
+  <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:28px;flex-wrap:wrap;">
+    <a href="/jobs" class="btn btn-ghost btn-sm" style="padding:0;width:28px;height:28px;border-radius:6px;border:1px solid var(--border);flex-shrink:0;margin-top:4px;">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2L4 7l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <div style="flex:1;min-width:0;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <h1 style="font-size:22px;font-weight:600;color:var(--fg);letter-spacing:-0.4px;margin:0;">{job.title}</h1>
+        <span class={`badge ${job.status === 'active' ? 'badge-success' : job.status === 'interviewing' ? 'badge-info' : 'badge-neutral'}`}>{job.status}</span>
+      </div>
+      <div style="font-size:13px;color:var(--fg-mute);margin-top:4px;display:flex;gap:12px;flex-wrap:wrap;">
+        <span>{job.department}</span><span>·</span><span>{job.location}</span><span>·</span><span>Posted {job.created}</span>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <a href={`/jobs/${job.id}/edit`} class="btn btn-secondary btn-sm">Edit</a>
+      <a href={`/candidates?job=${job.id}`} class="btn btn-primary btn-sm">View Candidates</a>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px;">
+    <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Applicants</div><div class="stat-value" style="font-size:22px;">{jobCandidates.length}</div></div>
+    <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Shortlisted</div><div class="stat-value" style="font-size:22px;">{jobCandidates.filter(c => c.status === 'shortlisted').length}</div></div>
+    <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Interviews</div><div class="stat-value" style="font-size:22px;">{jobInterviews.length}</div></div>
+    <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Avg Score</div><div class="stat-value" style="font-size:22px;">{avgScore || '—'}</div></div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <a href="#overview" class="tab active" data-tab="overview">Overview</a>
+    <a href="#candidates" class="tab" data-tab="candidates">Candidates ({jobCandidates.length})</a>
+    <a href="#interviews" class="tab" data-tab="interviews">Interviews ({jobInterviews.length})</a>
+    <a href="#analytics" class="tab" data-tab="analytics">Analytics</a>
+  </div>
+
+  <!-- Overview -->
+  <div id="tab-overview" class="tab-pane">
+    <div style="display:grid;grid-template-columns:1fr 300px;gap:20px;align-items:start;">
+      <div>
+        <div class="card shadow-lvl-2" style="margin-bottom:16px;">
+          <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Role Summary</h3>
+          <p style="font-size:14px;color:var(--fg-body);line-height:1.6;margin:0 0 16px;">{job.description || `We are looking for a highly skilled ${job.title} to join our ${job.department} team.`}</p>
+          {job.responsibilities && <>
+            <h4 style="font-size:13px;font-weight:600;color:var(--fg);margin:0 0 8px;">Responsibilities</h4>
+            <p style="font-size:14px;color:var(--fg-body);line-height:1.6;margin:0;white-space:pre-line;">{job.responsibilities}</p>
+          </>}
+        </div>
+        <div class="card shadow-lvl-2">
+          <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Required Skills</h3>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">
+            {(job.requiredSkills || []).map(skill => (
+              <span class="badge badge-neutral" style="border:1px solid var(--border);">{skill}</span>
+            ))}
+            {(job.requiredSkills || []).length === 0 && <span style="font-size:13px;color:var(--fg-mute);">No skills listed.</span>}
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div class="card shadow-lvl-2">
+          <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Details</h3>
+          <div style="display:flex;flex-direction:column;gap:10px;font-size:13px;">
+            <div style="display:flex;justify-content:space-between;"><span style="color:var(--fg-mute);">Type</span><span style="color:var(--fg);font-weight:500;">{job.type}</span></div>
+            <div style="display:flex;justify-content:space-between;"><span style="color:var(--fg-mute);">Level</span><span style="color:var(--fg);font-weight:500;">{job.level}</span></div>
+            {job.salary && <div style="display:flex;justify-content:space-between;"><span style="color:var(--fg-mute);">Salary</span><span style="color:var(--fg);font-weight:500;">{job.salary}</span></div>}
+            {job.education && <div style="display:flex;justify-content:space-between;"><span style="color:var(--fg-mute);">Education</span><span style="color:var(--fg);font-weight:500;">{job.education}</span></div>}
+            {job.hiringManager && <div style="display:flex;justify-content:space-between;"><span style="color:var(--fg-mute);">Manager</span><span style="color:var(--fg);font-weight:500;">{job.hiringManager}</span></div>}
+          </div>
+        </div>
+        <div class="card shadow-lvl-2">
+          <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Hiring Funnel</h3>
+          {funnelData.map(row => (
+            <div class="funnel-row" style="padding:6px 0;">
+              <span class="funnel-label" style="font-size:12px;width:90px;">{row.stage}</span>
+              <div class="funnel-track"><div class="funnel-fill" style={`width:${Math.max(row.pct, row.count > 0 ? 4 : 0)}%`}></div></div>
+              <span class="funnel-count" style="font-size:12px;">{row.count}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Candidates -->
+  <div id="tab-candidates" class="tab-pane" style="display:none;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+      <span style="font-size:13px;color:var(--fg-mute);">{jobCandidates.length} candidate{jobCandidates.length !== 1 ? 's' : ''}</span>
+      <button class="btn btn-primary btn-sm" id="upload-btn-tab">Upload Resumes</button>
+    </div>
+    {jobCandidates.length === 0 ? (
+      <div class="empty-state card shadow-lvl-2">
+        <svg width="40" height="40" viewBox="0 0 40 40" fill="none" style="margin-bottom:12px;opacity:0.3;"><circle cx="20" cy="14" r="8" stroke="currentColor" stroke-width="2"/><path d="M5 36c0-8.284 6.716-12 15-12s15 3.716 15 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <div style="font-size:15px;font-weight:500;color:var(--fg);margin-bottom:4px;">No candidates yet</div>
+        <div style="font-size:13px;margin-bottom:16px;">Upload resumes to start AI screening.</div>
+        <button class="btn btn-primary btn-sm" id="upload-btn-empty">Upload Resumes</button>
+      </div>
+    ) : (
+      <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
+        <div class="table-container">
+          <table>
+            <thead><tr><th>Rank</th><th>Candidate</th><th>Score</th><th>Experience</th><th>Skills Match</th><th>Education</th><th>Status</th><th>Recommendation</th><th></th></tr></thead>
+            <tbody>
+              {jobCandidates.map(c => (
+                <tr>
+                  <td><span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--fg-mute);">#{c.rank}</span></td>
+                  <td>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                      <div class="avatar" style="width:28px;height:28px;font-size:11px;">{c.name.split(' ').map((n: string) => n[0]).join('')}</div>
+                      <div>
+                        <a href={`/candidates/${c.id}`} style="font-size:13px;font-weight:500;color:var(--fg);text-decoration:none;">{c.name}</a>
+                        <div style="font-size:11px;color:var(--fg-mute);">{c.location || 'Location not set'}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td><div class={`score-ring ${c.score >= 85 ? 'score-high' : c.score >= 70 ? 'score-mid' : 'score-low'}`}>{c.score}</div></td>
+                  <td style="font-family:'JetBrains Mono',monospace;font-size:12px;">{c.experience} yrs</td>
+                  <td>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                      <div class="progress" style="width:56px;"><div class="progress-bar" style={`width:${c.skillsMatch}%`}></div></div>
+                      <span style="font-size:12px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;">{c.skillsMatch}%</span>
+                    </div>
+                  </td>
+                  <td style="font-family:'JetBrains Mono',monospace;font-size:12px;">{c.educationMatch}%</td>
+                  <td>
+                    <select class="select" style="width:120px;height:28px;font-size:12px;" data-cand-id={c.id} onchange="updateStatus(this)">
+                      {['applied','screening','shortlisted','interview','offered','hired','rejected'].map(s => (
+                        <option value={s} selected={c.status === s}>{s}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td style="font-size:12px;color:var(--fg-body);">{c.recommendation}</td>
+                  <td><a href={`/candidates/${c.id}`} class="btn btn-ghost btn-sm">Profile →</a></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )}
+  </div>
+
+  <!-- Interviews -->
+  <div id="tab-interviews" class="tab-pane" style="display:none;">
+    <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
+      <a href={`/interviews/schedule?job=${job.id}`} class="btn btn-primary btn-sm">Schedule Interview</a>
+    </div>
+    {jobInterviews.length === 0 ? (
+      <div class="empty-state card shadow-lvl-2">
+        <div style="font-size:15px;font-weight:500;color:var(--fg);">No interviews yet</div>
+      </div>
+    ) : (
+      <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
+        <div class="table-container">
+          <table>
+            <thead><tr><th>Candidate</th><th>Round</th><th>Interviewer</th><th>Date</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              {jobInterviews.map(iv => (
+                <tr>
+                  <td style="font-weight:500;color:var(--fg);">{iv.candidateName}</td>
+                  <td style="color:var(--fg-body);">{iv.round}</td>
+                  <td style="color:var(--fg-mute);">{iv.interviewer}</td>
+                  <td style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--fg-mute);">{iv.date} · {iv.time}</td>
+                  <td><span class={`badge ${iv.status === 'scheduled' ? 'badge-info' : iv.status === 'completed' ? 'badge-success' : 'badge-neutral'}`}>{iv.status}</span></td>
+                  <td><a href={`/interviews/${iv.id}`} class="btn btn-ghost btn-sm">View</a></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )}
+  </div>
+
+  <!-- Analytics -->
+  <div id="tab-analytics" class="tab-pane" style="display:none;">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;">
+      <div class="card shadow-lvl-2"><div class="stat-label">Avg Score</div><div class="stat-value" style="font-size:22px;">{avgScore || '—'}</div></div>
+      <div class="card shadow-lvl-2"><div class="stat-label">Avg Experience</div><div class="stat-value" style="font-size:22px;">{avgExp} <span style="font-size:14px;font-weight:400;">yrs</span></div></div>
+      <div class="card shadow-lvl-2"><div class="stat-label">Shortlist Rate</div><div class="stat-value" style="font-size:22px;">{jobCandidates.length ? Math.round(jobCandidates.filter(c => c.status === 'shortlisted').length / jobCandidates.length * 100) : 0}%</div></div>
+      <div class="card shadow-lvl-2"><div class="stat-label">Interview Rate</div><div class="stat-value" style="font-size:22px;">{jobCandidates.length ? Math.round(jobCandidates.filter(c => c.status === 'interview').length / jobCandidates.length * 100) : 0}%</div></div>
+    </div>
+  </div>
+
+  <!-- Upload modal -->
+  <div id="upload-modal" style="display:none;position:fixed;inset:0;z-index:100;align-items:center;justify-content:center;">
+    <div style="position:absolute;inset:0;background:rgba(0,0,0,0.6);" id="modal-overlay"></div>
+    <div class="card shadow-lvl-5" style="position:relative;z-index:1;width:480px;max-width:calc(100vw - 32px);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <h2 style="font-size:16px;font-weight:600;color:var(--fg);margin:0;">Upload Resumes</h2>
+        <button id="modal-close" class="btn btn-ghost" style="padding:0;width:28px;height:28px;">✕</button>
+      </div>
+      <p style="font-size:13px;color:var(--fg-mute);margin:0 0 16px;">Uploading for: <strong style="color:var(--fg);">{job.title}</strong></p>
+      <div id="drop-zone" style="border:2px dashed var(--border);border-radius:8px;padding:32px 24px;text-align:center;cursor:pointer;background:var(--bg-soft);">
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none" style="margin:0 auto 12px;opacity:0.4;"><path d="M16 20V8M11 13l5-5 5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 24h20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <div style="font-size:14px;font-weight:500;color:var(--fg);margin-bottom:4px;">Drag & drop resumes here</div>
+        <div style="font-size:12px;color:var(--fg-mute);">PDF, DOCX · up to 50 files</div>
+        <label class="btn btn-secondary btn-sm" style="margin-top:14px;cursor:pointer;display:inline-flex;">
+          Browse Files
+          <input id="file-input" type="file" multiple accept=".pdf,.docx,.doc" style="display:none;" />
+        </label>
+      </div>
+      <div id="file-list" style="margin-top:12px;display:none;"></div>
+      <div id="upload-progress" style="display:none;margin-top:12px;">
+        <div class="progress"><div id="progress-bar" class="progress-bar" style="width:0%;transition:width 300ms;"></div></div>
+        <p id="upload-status" style="font-size:12px;color:var(--fg-mute);margin:6px 0 0;"></p>
+      </div>
+      <div id="upload-result" style="display:none;margin-top:12px;padding:10px 12px;border-radius:6px;background:#d1fae5;color:#065f46;font-size:13px;"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+        <button id="modal-cancel" class="btn btn-secondary">Cancel</button>
+        <button id="upload-submit" class="btn btn-primary" disabled>Upload & Analyze</button>
+      </div>
+    </div>
+  </div>
+</AppLayout>
+
+<script define:vars={{ jobId: job.id }}>
+  // Tabs
+  document.querySelectorAll('.tab[data-tab]').forEach(tab => {
+    tab.addEventListener('click', (e) => {
+      e.preventDefault();
+      const target = tab.dataset.tab;
+      document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll('.tab-pane').forEach(p => {
+        p.style.display = p.id === `tab-${target}` ? '' : 'none';
+      });
+    });
+  });
+
+  // Status update
+  async function updateStatus(sel) {
+    const id = sel.dataset.candId;
+    const status = sel.value;
+    const res = await fetch(`/api/candidates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) {
+      alert('Failed to update status');
+      window.location.reload();
+    }
+  }
+  window.updateStatus = updateStatus;
+
+  // Upload modal
+  const modal = document.getElementById('upload-modal');
+  const fileInput = document.getElementById('file-input');
+  const fileList = document.getElementById('file-list');
+  const uploadSubmit = document.getElementById('upload-submit');
+  const uploadProgress = document.getElementById('upload-progress');
+  const progressBar = document.getElementById('progress-bar');
+  const uploadStatus = document.getElementById('upload-status');
+  const uploadResult = document.getElementById('upload-result');
+
+  let selectedFiles = [];
+
+  function openModal() { modal.style.display = 'flex'; }
+  function closeModal() { modal.style.display = 'none'; resetUpload(); }
+
+  document.getElementById('upload-btn-tab')?.addEventListener('click', openModal);
+  document.getElementById('upload-btn-empty')?.addEventListener('click', openModal);
+  document.getElementById('modal-close')?.addEventListener('click', closeModal);
+  document.getElementById('modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('modal-overlay')?.addEventListener('click', closeModal);
+
+  function renderFileList(files) {
+    selectedFiles = Array.from(files);
+    if (!selectedFiles.length) { fileList.style.display = 'none'; uploadSubmit.disabled = true; return; }
+    fileList.style.display = 'block';
+    fileList.innerHTML = selectedFiles.map(f =>
+      `<div style="font-size:12px;color:var(--fg-body);padding:4px 0;display:flex;align-items:center;gap:6px;">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><rect x="1" y="1" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
+        ${f.name}
+      </div>`
+    ).join('');
+    uploadSubmit.disabled = false;
+  }
+
+  fileInput?.addEventListener('change', (e) => renderFileList(e.target.files));
+
+  const dropZone = document.getElementById('drop-zone');
+  dropZone?.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.style.borderColor = 'var(--fg)'; });
+  dropZone?.addEventListener('dragleave', () => { dropZone.style.borderColor = 'var(--border)'; });
+  dropZone?.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.style.borderColor = 'var(--border)';
+    renderFileList(e.dataTransfer.files);
+  });
+
+  function resetUpload() {
+    selectedFiles = [];
+    fileList.style.display = 'none';
+    fileList.innerHTML = '';
+    uploadProgress.style.display = 'none';
+    uploadResult.style.display = 'none';
+    uploadSubmit.disabled = true;
+    if (fileInput) fileInput.value = '';
+  }
+
+  document.getElementById('upload-submit')?.addEventListener('click', async () => {
+    if (!selectedFiles.length) return;
+
+    uploadSubmit.disabled = true;
+    uploadProgress.style.display = 'block';
+    uploadResult.style.display = 'none';
+    uploadStatus.textContent = `Uploading ${selectedFiles.length} resume(s)…`;
+    progressBar.style.width = '30%';
+
+    const formData = new FormData();
+    formData.append('jobId', jobId);
+    selectedFiles.forEach(f => formData.append('files', f));
+
+    try {
+      progressBar.style.width = '60%';
+      const res = await fetch('/api/candidates/upload', { method: 'POST', body: formData });
+      progressBar.style.width = '100%';
+
+      if (res.ok) {
+        const data = await res.json();
+        uploadStatus.textContent = 'Analysis complete!';
+        uploadResult.style.display = 'block';
+        uploadResult.textContent = `✓ ${data.uploaded} resume(s) uploaded and analyzed. Refreshing…`;
+        setTimeout(() => window.location.reload(), 1500);
+      } else {
+        const err = await res.json();
+        uploadProgress.style.display = 'none';
+        uploadResult.style.display = 'block';
+        uploadResult.style.background = '#fee2e2';
+        uploadResult.style.color = '#991b1b';
+        uploadResult.textContent = `Error: ${err.error || 'Upload failed'}`;
+        uploadSubmit.disabled = false;
+      }
+    } catch (e) {
+      uploadProgress.style.display = 'none';
+      uploadResult.style.display = 'block';
+      uploadResult.style.background = '#fee2e2';
+      uploadResult.style.color = '#991b1b';
+      uploadResult.textContent = 'Network error. Please try again.';
+      uploadSubmit.disabled = false;
+    }
+  });
+</script>

@@ -1,0 +1,180 @@
+---
+import AppLayout from "../../layouts/AppLayout.astro";
+---
+
+<AppLayout title="Settings" activeNav="settings">
+  <div style="display:flex;align-items:flex-start;gap:32px;min-height:600px;">
+    <!-- Sidebar nav -->
+    <nav style="width:200px;flex-shrink:0;">
+      <div style="font-size:11px;font-weight:400;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px;padding:0 8px;">Settings</div>
+      {[
+        { id: "profile", label: "Profile" },
+        { id: "organization", label: "Organization" },
+        { id: "notifications", label: "Notifications" },
+        { id: "theme", label: "Theme & Appearance" },
+      ].map(item => (
+        <button class={`nav-item settings-tab w-full text-left ${item.id === "profile" ? "active" : ""}`} data-panel={item.id} style="width:100%;text-align:left;">
+          {item.label}
+        </button>
+      ))}
+    </nav>
+
+    <!-- Panels -->
+    <div style="flex:1;max-width:600px;">
+      <!-- Profile -->
+      <div id="panel-profile" class="settings-panel">
+        <h1 style="font-size:20px;font-weight:600;color:var(--fg);letter-spacing:-0.3px;margin:0 0 20px;">Profile</h1>
+        <div class="card shadow-lvl-2" style="margin-bottom:20px;">
+          <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;">
+            <div class="avatar" style="width:56px;height:56px;font-size:20px;">MK</div>
+            <div>
+              <div style="font-size:15px;font-weight:600;color:var(--fg);">Maya Kim</div>
+              <div style="font-size:13px;color:var(--fg-mute);">Head of Talent · HireVerse AI</div>
+              <button class="btn btn-ghost btn-sm" style="margin-top:6px;padding:0;font-size:12px;color:var(--fg-mute);">Change photo</button>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+            <div>
+              <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">First Name</label>
+              <input type="text" class="input" value="Maya" />
+            </div>
+            <div>
+              <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Last Name</label>
+              <input type="text" class="input" value="Kim" />
+            </div>
+            <div style="grid-column:1/-1;">
+              <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Email</label>
+              <input type="email" class="input" value="maya.kim@hireverse.ai" />
+            </div>
+            <div>
+              <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Title</label>
+              <input type="text" class="input" value="Head of Talent" />
+            </div>
+            <div>
+              <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Phone</label>
+              <input type="text" class="input" value="+1 (555) 000-0001" />
+            </div>
+          </div>
+        </div>
+        <div class="card shadow-lvl-2">
+          <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Security</h3>
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            <div>
+              <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Current Password</label>
+              <input type="password" class="input" placeholder="••••••••" />
+            </div>
+            <div>
+              <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">New Password</label>
+              <input type="password" class="input" placeholder="••••••••" />
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-top:16px;">
+          <button class="btn btn-primary">Save Changes</button>
+        </div>
+      </div>
+
+      <!-- Organization -->
+      <div id="panel-organization" class="settings-panel" style="display:none;">
+        <h1 style="font-size:20px;font-weight:600;color:var(--fg);letter-spacing:-0.3px;margin:0 0 20px;">Organization</h1>
+        <div class="card shadow-lvl-2">
+          <div style="display:flex;flex-direction:column;gap:16px;">
+            <div>
+              <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Organization Name</label>
+              <input type="text" class="input" value="HireVerse AI" />
+            </div>
+            <div>
+              <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Industry</label>
+              <select class="select">
+                <option selected>Technology / Software</option>
+                <option>Finance</option>
+                <option>Healthcare</option>
+                <option>Retail</option>
+                <option>Other</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Company Size</label>
+              <select class="select">
+                <option>1–50</option>
+                <option selected>51–200</option>
+                <option>201–1000</option>
+                <option>1000+</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Website</label>
+              <input type="url" class="input" value="https://hireverse.ai" />
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;margin-top:16px;">
+            <button class="btn btn-primary">Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Notifications -->
+      <div id="panel-notifications" class="settings-panel" style="display:none;">
+        <h1 style="font-size:20px;font-weight:600;color:var(--fg);letter-spacing:-0.3px;margin:0 0 20px;">Notifications</h1>
+        <div class="card shadow-lvl-2">
+          <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Email Notifications</h3>
+          <div style="display:flex;flex-direction:column;gap:14px;">
+            {[
+              { label: "New application received", checked: true },
+              { label: "AI analysis complete", checked: true },
+              { label: "Candidate shortlisted", checked: true },
+              { label: "Interview scheduled", checked: true },
+              { label: "Interview feedback submitted", checked: false },
+              { label: "Offer accepted / declined", checked: true },
+              { label: "Weekly hiring summary", checked: false },
+            ].map(item => (
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                <input type="checkbox" checked={item.checked} style="accent-color:var(--fg);width:15px;height:15px;" />
+                <span style="font-size:14px;color:var(--fg-body);">{item.label}</span>
+              </label>
+            ))}
+          </div>
+          <div style="display:flex;justify-content:flex-end;margin-top:20px;">
+            <button class="btn btn-primary">Save Preferences</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Theme -->
+      <div id="panel-theme" class="settings-panel" style="display:none;">
+        <h1 style="font-size:20px;font-weight:600;color:var(--fg);letter-spacing:-0.3px;margin:0 0 20px;">Theme & Appearance</h1>
+        <div class="card shadow-lvl-2">
+          <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Color Mode</h3>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px;">
+            {[
+              { id: "dark", label: "Dark", bg: "#0a0a0a", fg: "#ededed" },
+              { id: "light", label: "Light", bg: "#ffffff", fg: "#171717" },
+              { id: "system", label: "System", bg: "linear-gradient(135deg, #0a0a0a 50%, #ffffff 50%)", fg: "#888888" },
+            ].map(mode => (
+              <button class="theme-mode-btn" data-mode={mode.id} style={`border:2px solid var(--border);border-radius:8px;padding:16px 12px;cursor:pointer;background:transparent;display:flex;flex-direction:column;align-items:center;gap:8px;`}>
+                <div style={`width:36px;height:36px;border-radius:6px;background:${mode.bg};border:1px solid var(--border);`}></div>
+                <span style={`font-size:13px;color:${mode.fg === "#888888" ? "var(--fg-body)" : "var(--fg)"};font-weight:500;`}>{mode.label}</span>
+              </button>
+            ))}
+          </div>
+          <div style="display:flex;justify-content:flex-end;">
+            <button class="btn btn-primary">Apply</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</AppLayout>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>(".settings-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const target = btn.dataset.panel;
+      document.querySelectorAll(".settings-tab").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      document.querySelectorAll<HTMLDivElement>(".settings-panel").forEach(p => {
+        p.style.display = p.id === `panel-${target}` ? "" : "none";
+      });
+    });
+  });
+</script>

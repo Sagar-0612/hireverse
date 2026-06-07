@@ -1,0 +1,183 @@
+---
+import AppLayout from "../../layouts/AppLayout.astro";
+import { connectDB } from "../../db/connection";
+import { Team } from "../../db/models/Team";
+
+await connectDB();
+const managers = await Team.find({ role: 'Hiring Manager', status: 'active' }).lean();
+---
+
+<AppLayout title="Create Job" activeNav="jobs">
+  <div style="max-width:720px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:28px;">
+      <a href="/jobs" class="btn btn-ghost btn-sm" style="padding:0;width:28px;height:28px;border-radius:6px;border:1px solid var(--border);">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2L4 7l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      <div>
+        <h1 style="font-size:24px;font-weight:600;color:var(--fg);letter-spacing:-0.5px;margin:0;">Create Job</h1>
+        <p style="font-size:14px;color:var(--fg-mute);margin:4px 0 0;">Define the role and requirements for AI-assisted screening.</p>
+      </div>
+    </div>
+
+    <div id="error-banner" style="display:none;background:var(--bg-soft);border:1px solid #ee0000;border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#ee0000;"></div>
+
+    <form id="new-job-form" style="display:flex;flex-direction:column;gap:20px;">
+      <div class="card shadow-lvl-2">
+        <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Basic Information</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+          <div style="grid-column:1/-1;">
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Job Title <span style="color:#ee0000;">*</span></label>
+            <input type="text" name="title" class="input" placeholder="e.g. Senior Frontend Engineer" required />
+          </div>
+          <div>
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Department <span style="color:#ee0000;">*</span></label>
+            <select name="department" class="select" required>
+              <option value="">Select department</option>
+              {['Engineering','Product','Design','AI / ML','Infrastructure','Analytics','HR','Finance','Marketing'].map(d => <option>{d}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Location <span style="color:#ee0000;">*</span></label>
+            <input type="text" name="location" class="input" placeholder="e.g. Remote, San Francisco, CA" required />
+          </div>
+          <div>
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Employment Type</label>
+            <select name="type" class="select">
+              {['Full-time','Part-time','Contract','Internship'].map(t => <option>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Experience Level</label>
+            <select name="level" class="select">
+              {['Entry Level (0–2 yrs)','Mid Level (3–5 yrs)','Senior Level (5–8 yrs)','Staff / Principal (8+ yrs)'].map(l => <option>{l}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Salary Range</label>
+            <input type="text" name="salary" class="input" placeholder="e.g. $120,000 – $160,000" />
+          </div>
+          <div style="grid-column:1/-1;">
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Hiring Manager</label>
+            <select name="hiringManager" class="select">
+              <option value="">Assign hiring manager</option>
+              {managers.map(m => <option value={m.name}>{m.name}</option>)}
+              <option value="Unassigned">Unassigned</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="card shadow-lvl-2">
+        <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Job Description</h2>
+        <div style="display:flex;flex-direction:column;gap:16px;">
+          <div>
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Role Summary <span style="color:#ee0000;">*</span></label>
+            <textarea name="description" class="input" style="height:100px;padding:10px 12px;resize:vertical;" placeholder="Describe the role and what success looks like in the first 90 days…" required></textarea>
+          </div>
+          <div>
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Key Responsibilities</label>
+            <textarea name="responsibilities" class="input" style="height:100px;padding:10px 12px;resize:vertical;" placeholder="List key responsibilities, one per line…"></textarea>
+          </div>
+          <div>
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Required Skills <span style="color:#ee0000;">*</span></label>
+            <input type="text" name="requiredSkills" class="input" placeholder="e.g. React, TypeScript, Node.js, GraphQL (comma-separated)" required />
+            <p style="font-size:12px;color:var(--fg-mute);margin:6px 0 0;">Used by AI to score resume skill-match percentage.</p>
+          </div>
+          <div>
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Nice-to-Have Skills</label>
+            <input type="text" name="niceToHaveSkills" class="input" placeholder="e.g. Rust, WebAssembly, AWS (comma-separated)" />
+          </div>
+          <div>
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Education Requirements</label>
+            <select name="education" class="select">
+              <option value="">No specific requirement</option>
+              <option>Bachelor's degree or equivalent</option>
+              <option>Master's degree preferred</option>
+              <option>PhD required</option>
+              <option>Bootcamp / Self-taught accepted</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="card shadow-lvl-2">
+        <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">AI Screening Settings</h2>
+        <div style="display:flex;flex-direction:column;gap:16px;">
+          <div>
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Minimum Score Threshold</label>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <input type="range" name="threshold" min="50" max="95" value="70" id="threshold-range" style="flex:1;accent-color:var(--fg);" />
+              <span id="threshold-val" style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;color:var(--fg);width:40px;text-align:right;">70</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:20px;flex-wrap:wrap;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+              <input type="checkbox" name="autoRank" value="true" checked style="accent-color:var(--fg);" />
+              <span style="font-size:13px;color:var(--fg-body);">Auto-rank resumes on upload</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+              <input type="checkbox" name="aiSummary" value="true" checked style="accent-color:var(--fg);" />
+              <span style="font-size:13px;color:var(--fg-body);">Generate AI candidate summaries</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+              <input type="checkbox" name="biasCheck" value="true" style="accent-color:var(--fg);" />
+              <span style="font-size:13px;color:var(--fg-body);">Enable bias detection</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px;justify-content:flex-end;padding-bottom:32px;">
+        <a href="/jobs" class="btn btn-secondary">Cancel</a>
+        <button type="submit" id="submit-btn" class="btn btn-primary">Create Job</button>
+      </div>
+    </form>
+  </div>
+</AppLayout>
+
+<script>
+  document.getElementById('threshold-range')?.addEventListener('input', (e) => {
+    const val = document.getElementById('threshold-val');
+    if (val) val.textContent = (e.target as HTMLInputElement).value;
+  });
+
+  document.getElementById('new-job-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target as HTMLFormElement;
+    const submitBtn = document.getElementById('submit-btn') as HTMLButtonElement;
+    const errorBanner = document.getElementById('error-banner')!;
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Creating…';
+
+    const data = Object.fromEntries(new FormData(form));
+    // Convert checkbox values
+    (data as any).autoRank = form.querySelector<HTMLInputElement>('[name="autoRank"]')?.checked ?? true;
+    (data as any).aiSummary = form.querySelector<HTMLInputElement>('[name="aiSummary"]')?.checked ?? true;
+    (data as any).biasCheck = form.querySelector<HTMLInputElement>('[name="biasCheck"]')?.checked ?? false;
+    (data as any).threshold = Number(data.threshold);
+
+    try {
+      const res = await fetch('/api/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        const job = await res.json();
+        window.location.href = `/jobs/${job._id}`;
+      } else {
+        const err = await res.json();
+        errorBanner.textContent = err.error || 'Failed to create job.';
+        errorBanner.style.display = 'block';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Create Job';
+      }
+    } catch {
+      errorBanner.textContent = 'Network error. Please try again.';
+      errorBanner.style.display = 'block';
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Create Job';
+    }
+  });
+</script>
