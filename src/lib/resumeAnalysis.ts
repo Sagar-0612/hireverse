@@ -47,6 +47,18 @@ export async function extractResumeText(buffer: Buffer, mimeType: string, filena
       const result = await mammoth.extractRawText({ buffer });
       return result.value || '';
     }
+    // Legacy binary Word format (.doc, MIME application/msword) — mammoth only
+    // reads the modern .docx (OOXML) format, and the binary OLE2 structure of
+    // a .doc fails the plain-text decode below, so without this branch every
+    // .doc upload silently produced empty text (garbage name-from-filename,
+    // zero experience/skills/score).
+    if (mimeType === 'application/msword' || ext === 'doc') {
+      const WordExtractorModule: any = await import('word-extractor');
+      const WordExtractor = WordExtractorModule.default ?? WordExtractorModule;
+      const extractor = new WordExtractor();
+      const doc = await extractor.extract(buffer);
+      return doc.getBody() || '';
+    }
     const decoded = buffer.toString('utf-8');
     return isLikelyText(decoded) ? decoded : '';
   } catch (err) {
@@ -67,12 +79,39 @@ function extractNameFromFilename(filename: string): string {
     .join(' ') || 'Unknown Candidate';
 }
 
+// Resume templates (especially the consultancy/corporate "Name: X / Role: Y"
+// style) commonly render an all-caps, multi-word section header — "EDUCATION
+// AND CREDENTIALS", "PROFESSIONAL EXPERIENCE", "TECHNICAL PROFICIENCIES" — on
+// its own line. Those satisfy the "every word looks like an acronym/initial"
+// heuristic just as well as an all-caps name like "JOHN SMITH" does, so both
+// the name and location heuristics need to recognize and skip them.
+const SECTION_HEADER_RE = /\b(summary|profile|objective|education|credentials|qualifications|experience|professional|technical|proficienc(?:y|ies)|skills?|projects?|certifications?|training|achievements?|accolades|references?|publications?|awards?|languages?|interests?|activities|volunteer|employment|career|background|highlights|expertise|competenc(?:y|ies)|tools|platforms|responsibilities)\b/i;
+
 const NAME_NOISE = /resume|curriculum|vitae|\bcv\b|address|objective|summary|profile|contact|linkedin|github|http|www\.|email|phone|@/i;
 
+// "Name: Sagar Pawar" / "Name:\tSagar Pawar" — the corporate consultancy
+// resume template puts the field label and value on the same line (unlike
+// the usual "Name" header followed by the value below it), which the
+// line-by-line heuristic below can't see as a name candidate at all.
+// Word-by-word separator is restricted to plain spaces (not \s, which would
+// also match the tab that the same templates use between "Name: Sagar Pawar"
+// and the *next* field — e.g. "\tDesignation (Grade):" — letting the capture
+// run on into "Sagar Pawar Designation").
+const NAME_LABELED = /(?:^|[\r\n\t])[ ]*(?:full\s+)?name\s*[:\-][ \t]*([A-Z][a-zA-Z'.-]+(?:[ ]+[A-Z][a-zA-Z'.-]+){1,3})(?=[\t\r\n]|$)/i;
+
 function extractName(text: string, filename: string): string {
+  const labeled = text.match(NAME_LABELED);
+  if (labeled) {
+    return labeled[1]
+      .trim()
+      .split(/\s+/)
+      .map(w => w[0].toUpperCase() + w.slice(1).toLowerCase())
+      .join(' ');
+  }
+
   const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(0, 15);
   for (const line of lines) {
-    if (NAME_NOISE.test(line)) continue;
+    if (NAME_NOISE.test(line) || SECTION_HEADER_RE.test(line)) continue;
     if (/\d/.test(line)) continue;
     if (line.length > 40) continue;
     const words = line.split(/\s+/).filter(Boolean);
@@ -104,28 +143,40 @@ function extractPhone(text: string): string {
 // "City, ST" with a clean two-letter state/province code — the cleanest, most
 // unambiguous signal a resume gives for location.
 const LOCATION_STRICT = /^[A-Z][a-zA-Z.\s]{1,30},\s?[A-Z]{2}$/;
-// "City, Country" / "City, Region" — still a comma-separated place, but the
-// second part isn't a tidy two-letter code so it's read with less certainty.
-const LOCATION_LOOSE = /^[A-Z][a-zA-Z.\s]{1,30},\s?[A-Z][a-zA-Z\s]{2,24}$/;
+// "City, Country" / "City, Region" / "City, Region, Country" — still a
+// comma-separated place, but the parts aren't tidy two-letter codes so it's
+// read with less certainty.
+const LOCATION_LOOSE = /^[A-Z][a-zA-Z.\s]{1,30},\s?[A-Z][a-zA-Z.\s]{1,30}(?:,\s?[A-Z][a-zA-Z.\s]{1,30})?$/;
 const LOCATION_LABELED = /(?:location|address|based\s+in|residing\s+in|city)\s*[:\-]\s*([A-Z][a-zA-Z,.\s]{2,40})/i;
 // Bare single/double-word capitalized line — could be a city, could easily be
 // a job title or section header, hence the lowest confidence tier.
 const LOCATION_BARE = /^[A-Z][a-zA-Z.]{2,20}(?:\s[A-Z][a-zA-Z.]{2,20})?$/;
 const TITLE_NOISE = /engineer|manager|developer|designer|analyst|specialist|lead|director|intern|consultant|architect|founder|officer|scientist|administrator|coordinator|executive/i;
 
-function extractLocation(text: string): { location: string; confidence: LocationConfidence } {
+// Resume headers put the candidate's name right next to (often directly above
+// or below) their location, so a bare capitalized line is just as likely to be
+// their name as their city. Comparing against the already-extracted name lets
+// us rule that out instead of reporting "Sagar Pawar" as his own location.
+const normalizeForCompare = (s: string) => s.replace(/[^a-zA-Z\s]/g, ' ').trim().toLowerCase().replace(/\s+/g, ' ');
+
+function extractLocation(text: string, candidateName: string): { location: string; confidence: LocationConfidence } {
   const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(0, 12);
   const clean = (l: string) => l.replace(/[|•].*$/, '').trim();
   const isNoisy = (l: string) => /@|\d{4,}|https?:/i.test(l);
+  const normalizedName = normalizeForCompare(candidateName);
+  const isCandidateName = (l: string) => {
+    const n = normalizeForCompare(l);
+    return n.length > 0 && n === normalizedName;
+  };
 
   for (const line of lines) {
-    if (isNoisy(line) || line.length >= 60) continue;
+    if (isNoisy(line) || line.length >= 60 || isCandidateName(line)) continue;
     const c = clean(line);
     if (LOCATION_STRICT.test(c)) return { location: c, confidence: 'high' };
   }
 
   for (const line of lines) {
-    if (isNoisy(line) || line.length >= 60) continue;
+    if (isNoisy(line) || line.length >= 60 || isCandidateName(line)) continue;
     const c = clean(line);
     if (LOCATION_LOOSE.test(c)) return { location: c, confidence: 'medium' };
   }
@@ -133,11 +184,13 @@ function extractLocation(text: string): { location: string; confidence: Location
   const labeled = text.match(LOCATION_LABELED);
   if (labeled) {
     const value = clean(labeled[1].split(/[\n\r]/)[0]);
-    if (value.length > 1 && value.length < 60) return { location: value, confidence: 'medium' };
+    if (value.length > 1 && value.length < 60 && !isCandidateName(value)) {
+      return { location: value, confidence: 'medium' };
+    }
   }
 
   for (const line of lines.slice(0, 6)) {
-    if (isNoisy(line) || line.length >= 35 || TITLE_NOISE.test(line)) continue;
+    if (isNoisy(line) || line.length >= 35 || TITLE_NOISE.test(line) || SECTION_HEADER_RE.test(line) || isCandidateName(line)) continue;
     const c = clean(line);
     if (LOCATION_BARE.test(c)) return { location: c, confidence: 'low' };
   }
@@ -145,10 +198,23 @@ function extractLocation(text: string): { location: string; confidence: Location
   return { location: 'Location Not Found', confidence: 'none' };
 }
 
+const MONTH_NAMES = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+const monthIndex = (name?: string): number | null => {
+  if (!name) return null;
+  const i = MONTH_NAMES.indexOf(name.slice(0, 3).toLowerCase());
+  return i === -1 ? null : i;
+};
+
 const DAY = '\\d{1,2}\\s+';
-const MONTH = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?\\s+';
-// Matches "2019 - 2023", "Mar 2019 - Present", and "10 Sept. 2019 - 13 May 2023"
-const RANGE_RE = new RegExp(`(?:${DAY})?(?:${MONTH})?(\\d{4})\\s*(?:[-–—]|to)\\s*(?:${DAY})?(?:${MONTH})?(present|current|now|\\d{4})`, 'gi');
+const MONTH_NAME = '(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?';
+// Captures month name (when present) alongside the year on both ends, so a
+// range's actual covered span can be measured to the month rather than just
+// "which calendar years did this touch" — the difference between "Sept 2019 –
+// May 2023" spanning ~3.7 years vs. a naive year-diff calling it 4.
+const RANGE_RE = new RegExp(
+  `(?:${DAY})?(?:${MONTH_NAME}\\s+)?(\\d{4})\\s*(?:[-–—]|to)\\s*(?:${DAY})?(?:${MONTH_NAME}\\s+)?(present|current|now|\\d{4})`,
+  'gi'
+);
 
 // Resumes contain "YYYY - YYYY" ranges for both jobs and degrees. PDF text
 // extraction also frequently scrambles section ordering in multi-column
@@ -156,16 +222,18 @@ const RANGE_RE = new RegExp(`(?:${DAY})?(?:${MONTH})?(\\d{4})\\s*(?:[-–—]|to
 // individually by whether education-related words appear right around it.
 const EDU_NEARBY_RE = /\b(university|college|institute|polytechnic|academy|school|bachelor'?s?|master'?s?|b\.?\s?tech|m\.?\s?tech|b\.?\s?sc|m\.?\s?sc|b\.?\s?e\b|phd|ph\.?d\.?|doctorate|diploma|degree)\b/i;
 
+// A career span (earliest job start → today) silently swallows real gaps
+// between roles — e.g. a candidate who worked 2016–2017, sat idle for two
+// years, then resumed in 2019 does NOT have 2016-to-now of experience. The
+// honest, recruiter-relevant number is the sum of months actually spent
+// employed, which means: parse every role's start/end to the month, merge
+// any that overlap (concurrent roles / messy multi-column extraction), and
+// add up only the covered spans — gaps fall in the cracks on purpose.
 function extractExperience(text: string): number {
-  const explicit = text.match(/(\d{1,2})\+?\s*(?:years?|yrs?)\s*(?:of\s*)?(?:professional\s+|relevant\s+|total\s+|work(?:ing)?\s+)?experience/i);
-  if (explicit) {
-    const years = parseInt(explicit[1], 10);
-    if (years > 0 && years <= 50) return years;
-  }
+  const now = new Date();
+  const currentYM = now.getFullYear() * 12 + now.getMonth();
 
-  const currentYear = new Date().getFullYear();
-  let earliest = Infinity;
-  let latest = -Infinity;
+  const ranges: { start: number; end: number }[] = [];
   let m: RegExpExecArray | null;
   RANGE_RE.lastIndex = 0;
   while ((m = RANGE_RE.exec(text)) !== null) {
@@ -173,14 +241,47 @@ function extractExperience(text: string): number {
     const windowEnd = Math.min(text.length, m.index + m[0].length + 30);
     if (EDU_NEARBY_RE.test(text.slice(windowStart, windowEnd))) continue;
 
-    const start = parseInt(m[1], 10);
-    const endRaw = m[2].toLowerCase();
-    const end = /present|current|now/.test(endRaw) ? currentYear : parseInt(endRaw, 10);
-    if (start >= 1960 && start <= currentYear) earliest = Math.min(earliest, start);
-    if (end >= 1960 && end <= currentYear) latest = Math.max(latest, end);
+    const startYear = parseInt(m[2], 10);
+    const endRaw = m[4].toLowerCase();
+    const isPresent = /present|current|now/.test(endRaw);
+    const endYear = isPresent ? now.getFullYear() : parseInt(endRaw, 10);
+    if (startYear < 1960 || startYear > now.getFullYear()) continue;
+    if (endYear < startYear || endYear > now.getFullYear()) continue;
+
+    // A bare year ("2019 - 2023") gives no month — treat it as covering the
+    // full calendar year so it doesn't get shortchanged against ranges that
+    // do specify months.
+    const startMonth = monthIndex(m[1]) ?? 0;
+    const endMonth = isPresent ? now.getMonth() : (monthIndex(m[3]) ?? 11);
+
+    const start = startYear * 12 + startMonth;
+    const end = Math.min(endYear * 12 + endMonth, currentYM);
+    if (end > start) ranges.push({ start, end });
   }
-  if (earliest !== Infinity && latest !== -Infinity && latest > earliest) {
-    return Math.min(latest - earliest, 45);
+
+  if (ranges.length) {
+    ranges.sort((a, b) => a.start - b.start || a.end - b.end);
+    let totalMonths = 0;
+    let curStart = ranges[0].start;
+    let curEnd = ranges[0].end;
+    for (let i = 1; i < ranges.length; i++) {
+      const r = ranges[i];
+      if (r.start <= curEnd) {
+        curEnd = Math.max(curEnd, r.end);
+      } else {
+        totalMonths += curEnd - curStart;
+        curStart = r.start;
+        curEnd = r.end;
+      }
+    }
+    totalMonths += curEnd - curStart;
+    return Math.min(Math.round(totalMonths / 12), 45);
+  }
+
+  const explicit = text.match(/(\d{1,2})\+?\s*(?:years?|yrs?)\s*(?:of\s*)?(?:professional\s+|relevant\s+|total\s+|work(?:ing)?\s+)?experience/i);
+  if (explicit) {
+    const years = parseInt(explicit[1], 10);
+    if (years > 0 && years <= 50) return years;
   }
   return 0;
 }
@@ -190,14 +291,48 @@ function extractExperience(text: string): number {
 // matching so a JD's "NextJS" recognizes a resume's "Next.js".
 const dropDots = (s: string) => s.replace(/\./g, '');
 
+// Single-edit distance — cheap enough at resume scale and exactly the
+// tolerance needed for one-letter spelling drift ("PostgresSQL" vs
+// "PostgreSQL", "Kuberentes" vs "Kubernetes") without risking false positives
+// between genuinely different short skill names ("Go" vs "C", "R" vs "Go").
+function levenshteinAtMost1(a: string, b: string): boolean {
+  if (a === b) return true;
+  const lenDiff = a.length - b.length;
+  if (lenDiff < -1 || lenDiff > 1) return false;
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+  let i = 0, j = 0, edits = 0;
+  while (i < shorter.length && j < longer.length) {
+    if (shorter[i] === longer[j]) { i++; j++; continue; }
+    if (++edits > 1) return false;
+    if (shorter.length === longer.length) { i++; j++; } // substitution
+    else j++; // insertion/deletion in the longer string
+  }
+  edits += (longer.length - j);
+  return edits <= 1;
+}
+
 function matchSkills(text: string, skills: string[]): string[] {
   const lower = dropDots(text.toLowerCase());
+  const words = lower.match(/[a-z0-9+#]+/g) || [];
+  const wordSet = new Set(words);
+
   return skills.filter(skill => {
     const s = dropDots(skill.toLowerCase().trim());
     if (!s) return false;
     const escaped = s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp(`(?:^|[^a-z0-9+#])${escaped}(?:[^a-z0-9+#]|$)`, 'i');
-    return re.test(lower);
+    if (re.test(lower)) return true;
+
+    // Fuzzy fallback for longer single-word skill names — JDs and resumes
+    // disagree on spelling ("PostgresSQL" vs "PostgreSQL") far more often than
+    // they describe genuinely different technologies that happen to be one
+    // letter apart, so this only kicks in past the length where that holds.
+    if (s.length >= 6 && !/[\s/]/.test(s)) {
+      for (const w of wordSet) {
+        if (Math.abs(w.length - s.length) <= 1 && levenshteinAtMost1(w, s)) return true;
+      }
+    }
+    return false;
   });
 }
 
@@ -262,7 +397,7 @@ export function analyzeResume(text: string, filename: string, job: JobLike): Res
   const name = extractName(cleaned, filename);
   const email = extractEmail(cleaned);
   const phone = extractPhone(cleaned);
-  const { location, confidence: locationConfidence } = extractLocation(cleaned);
+  const { location, confidence: locationConfidence } = extractLocation(cleaned, name);
   const experience = extractExperience(cleaned);
 
   const requiredSkills = job.requiredSkills || [];
