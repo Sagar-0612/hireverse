@@ -164,7 +164,7 @@ const skillScores = skillsToShow.map((skill: string) => {
             {candidate.rejected ? (
               <span class="badge badge-error">Rejected</span>
             ) : (
-              <select id="stage-select" class="select" style="width:140px;height:28px;font-size:12px;">
+              <select id="stage-select" class="select" style="width:140px;height:28px;font-size:12px;" data-current-stage={candidate.currentStage}>
                 {validStages.map(s => (
                   <option value={s.key} selected={candidate.currentStage === s.key}>{s.label}</option>
                 ))}
@@ -196,24 +196,31 @@ const skillScores = skillsToShow.map((skill: string) => {
 
 <script define:vars={{ candidateId: candidate.id }}>
   document.getElementById('stage-select')?.addEventListener('change', async (e) => {
-    const currentStage = e.target.value;
+    const select = e.target;
+    const previousStage = select.dataset.currentStage || '';
+    const currentStage = select.value;
     const notes = await window.hvPrompt({
       title: 'Move candidate',
       message: 'Add an optional note about this move (visible on the candidate journey):',
       placeholder: 'e.g. Strong portfolio, moving to next round',
       confirmLabel: 'Move',
     });
-    if (notes === null) return;
+    if (notes === null) {
+      select.value = previousStage;
+      return;
+    }
     const res = await fetch(`/api/candidates/${candidateId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ currentStage, notes }),
     });
-    if (!res.ok) {
+    if (res.ok) {
+      window.location.reload();
+    } else {
       const err = await res.json().catch(() => ({}));
       window.hvToast(err.error || 'Failed to update stage', 'error');
+      select.value = previousStage;
     }
-    window.location.reload();
   });
 
   document.getElementById('reject-btn')?.addEventListener('click', async () => {

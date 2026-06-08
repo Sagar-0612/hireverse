@@ -103,31 +103,84 @@ const isCompleted = interview.status === 'completed';
       </div>
 
       <div class="grid-main-aside" style="--aside-w:320px;">
-        <div class="card shadow-lvl-2">
-          <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Summary</h2>
-          {interview.transcriptSummary ? (
-            <div style="background:var(--bg-soft);border-radius:6px;padding:16px;border-left:3px solid var(--fg);">
-              <p style="font-size:14px;color:var(--fg-body);line-height:1.6;margin:0;">{interview.transcriptSummary}</p>
-            </div>
-          ) : (
-            <p style="font-size:13px;color:var(--fg-mute);">No summary recorded.</p>
-          )}
-          {interview.notes && (
-            <div style="margin-top:16px;">
-              <h3 style="font-size:12px;font-weight:600;color:var(--fg-mute);margin:0 0 8px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Interviewer Notes</h3>
-              <p style="font-size:13px;color:var(--fg-body);line-height:1.6;margin:0;">{interview.notes}</p>
-            </div>
-          )}
+        <div style="display:flex;flex-direction:column;gap:20px;">
+          <div class="card shadow-lvl-2">
+            <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;display:flex;align-items:center;gap:8px;">
+              AI Interview Analysis
+              {interview.analysis && <span class={`badge ${interview.analysis.decision === 'advance' ? 'badge-success' : 'badge-error'}`} style="font-size:10px;text-transform:none;letter-spacing:0;font-family:inherit;">{interview.analysis.decision === 'advance' ? 'Recommends advancing' : 'Recommends holding'}</span>}
+            </h2>
+            {interview.analysis ? (
+              <>
+                <div style="background:var(--bg-soft);border-radius:6px;padding:16px;border-left:3px solid var(--fg);margin-bottom:16px;">
+                  <p style="font-size:14px;color:var(--fg-body);line-height:1.6;margin:0;">{interview.analysis.reasoning}</p>
+                </div>
+                <div class="grid-cols-2" style="gap:16px;">
+                  <div>
+                    <h3 style="font-size:12px;font-weight:600;color:#10b981;margin:0 0 8px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Strengths</h3>
+                    {interview.analysis.strengths?.length ? (
+                      <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;">
+                        {interview.analysis.strengths.map((s: string) => <li style="font-size:13px;color:var(--fg-body);line-height:1.4;">{s}</li>)}
+                      </ul>
+                    ) : <p style="font-size:13px;color:var(--fg-mute);margin:0;">None detected in the feedback.</p>}
+                  </div>
+                  <div>
+                    <h3 style="font-size:12px;font-weight:600;color:#ef4444;margin:0 0 8px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Concerns</h3>
+                    {interview.analysis.concerns?.length ? (
+                      <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;">
+                        {interview.analysis.concerns.map((s: string) => <li style="font-size:13px;color:var(--fg-body);line-height:1.4;">{s}</li>)}
+                      </ul>
+                    ) : <p style="font-size:13px;color:var(--fg-mute);margin:0;">None detected in the feedback.</p>}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p style="font-size:13px;color:var(--fg-mute);">No analysis recorded for this interview.</p>
+            )}
+          </div>
+
+          <div class="card shadow-lvl-2">
+            <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Interviewer Feedback</h2>
+            {interview.feedback ? (
+              <p style="font-size:13px;color:var(--fg-body);line-height:1.6;margin:0;white-space:pre-wrap;">{interview.feedback}</p>
+            ) : (
+              <p style="font-size:13px;color:var(--fg-mute);margin:0;">No feedback recorded.</p>
+            )}
+            {interview.transcriptSummary && (
+              <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+                <h3 style="font-size:12px;font-weight:600;color:var(--fg-mute);margin:0 0 8px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Transcript</h3>
+                <p style="font-size:13px;color:var(--fg-mute);line-height:1.6;margin:0 0 8px;">{interview.transcriptSummary}</p>
+                {interview.transcript && (
+                  <details>
+                    <summary style="font-size:12px;color:var(--fg-mute);cursor:pointer;">View full transcript</summary>
+                    <p style="font-size:12px;color:var(--fg-body);line-height:1.6;margin:8px 0 0;white-space:pre-wrap;background:var(--bg-soft);border-radius:6px;padding:12px;max-height:320px;overflow:auto;">{interview.transcript}</p>
+                  </details>
+                )}
+              </div>
+            )}
+            {interview.notes && (
+              <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+                <h3 style="font-size:12px;font-weight:600;color:var(--fg-mute);margin:0 0 8px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Pre-Interview Notes</h3>
+                <p style="font-size:13px;color:var(--fg-body);line-height:1.6;margin:0;">{interview.notes}</p>
+              </div>
+            )}
+          </div>
         </div>
 
         <div style="display:flex;flex-direction:column;gap:16px;">
           <div class="card shadow-lvl-2">
             <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Final Recommendation</h3>
             <div style="font-size:18px;font-weight:600;color:var(--fg);margin-bottom:8px;">{interview.recommendation || 'Not set'}</div>
-            <span class={`badge ${interview.recommendation?.includes('Strong') ? 'badge-success' : 'badge-neutral'}`} style="font-size:12px;padding:4px 12px;">{interview.recommendation || '—'}</span>
+            <span class={`badge ${interview.recommendation?.includes('Strong') ? 'badge-success' : interview.recommendation === 'Do Not Recommend' ? 'badge-error' : 'badge-neutral'}`} style="font-size:12px;padding:4px 12px;">{interview.recommendation || '—'}</span>
           </div>
           <div class="card shadow-lvl-2">
-            <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Next Steps</h3>
+            <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Suggested Next Step</h3>
+            <p style="font-size:12px;color:var(--fg-mute);margin:0 0 12px;line-height:1.5;">
+              {interview.analysis?.decision === 'advance'
+                ? 'The analysis leans toward moving this candidate forward — schedule the next round when ready.'
+                : interview.analysis
+                  ? 'The analysis leans toward holding here — review the concerns above before deciding whether to reject or give another chance.'
+                  : 'Review the recommendation above, then choose how to proceed.'}
+            </p>
             <div style="display:flex;flex-direction:column;gap:8px;">
               <a href={`/interviews/schedule?candidate=${interview.candidateId}`} class="btn btn-primary" style="width:100%;border-radius:6px;">Schedule Next Round</a>
               <a href={`/candidates/${interview.candidateId}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">View Candidate</a>
@@ -177,38 +230,24 @@ const isCompleted = interview.status === 'completed';
   <!-- Complete modal -->
   <div id="complete-modal" style="display:none;position:fixed;inset:0;z-index:100;align-items:center;justify-content:center;">
     <div style="position:absolute;inset:0;background:rgba(0,0,0,0.6);" id="modal-overlay"></div>
-    <div class="card shadow-lvl-5" style="position:relative;z-index:1;width:480px;max-width:calc(100vw - 32px);">
-      <h2 style="font-size:16px;font-weight:600;color:var(--fg);margin:0 0 20px;">Complete Interview</h2>
-      <div class="grid-cols-3" style="margin-bottom:16px;">
-        <div>
-          <label style="font-size:12px;font-weight:500;color:var(--fg-mute);display:block;margin-bottom:6px;">Comm Score (0-100)</label>
-          <input id="comm-score" type="number" min="0" max="100" class="input" value="75" />
-        </div>
-        <div>
-          <label style="font-size:12px;font-weight:500;color:var(--fg-mute);display:block;margin-bottom:6px;">Tech Score (0-100)</label>
-          <input id="tech-score" type="number" min="0" max="100" class="input" value="75" />
-        </div>
-        <div>
-          <label style="font-size:12px;font-weight:500;color:var(--fg-mute);display:block;margin-bottom:6px;">Confidence (0-100)</label>
-          <input id="conf-score" type="number" min="0" max="100" class="input" value="75" />
-        </div>
-      </div>
+    <div class="card shadow-lvl-5" style="position:relative;z-index:1;width:560px;max-width:calc(100vw - 32px);max-height:calc(100vh - 64px);overflow:auto;">
+      <h2 style="font-size:16px;font-weight:600;color:var(--fg);margin:0 0 6px;">Complete Interview</h2>
+      <p style="font-size:12px;color:var(--fg-mute);margin:0 0 20px;line-height:1.5;">
+        Describe what actually happened — the AI analyzes your account (and the transcript, if you have one) and produces the scores, strengths, concerns, and a move-forward recommendation. It does not guess from nothing, so be specific.
+      </p>
       <div style="margin-bottom:16px;">
-        <label style="font-size:12px;font-weight:500;color:var(--fg-mute);display:block;margin-bottom:6px;">Recommendation</label>
-        <select id="recommendation" class="select">
-          <option value="Strongly Recommend">Strongly Recommend</option>
-          <option value="Recommend" selected>Recommend</option>
-          <option value="Neutral">Neutral</option>
-          <option value="Do Not Recommend">Do Not Recommend</option>
-        </select>
+        <label style="font-size:12px;font-weight:500;color:var(--fg-mute);display:block;margin-bottom:6px;">Your Feedback / Comments <span style="color:#ee0000;">*</span></label>
+        <textarea id="interview-feedback" class="input" style="height:140px;padding:10px 12px;resize:vertical;" placeholder="How did they do technically? How did they communicate? Did they seem confident under pressure? Would you move them forward — and why or why not? Be concrete: specific moments, answers, and your honest read carry the most weight."></textarea>
+        <p id="feedback-hint" style="font-size:11px;color:var(--fg-mute);margin:4px 0 0;"></p>
       </div>
       <div style="margin-bottom:20px;">
-        <label style="font-size:12px;font-weight:500;color:var(--fg-mute);display:block;margin-bottom:6px;">Summary / Notes</label>
-        <textarea id="transcript-summary" class="input" style="height:90px;padding:10px 12px;resize:vertical;" placeholder="Key observations, highlights, concerns…"></textarea>
+        <label style="font-size:12px;font-weight:500;color:var(--fg-mute);display:block;margin-bottom:6px;">Video / Call Transcript (optional)</label>
+        <textarea id="interview-transcript" class="input" style="height:110px;padding:10px 12px;resize:vertical;font-size:12px;" placeholder="Paste the transcript here if one is available — it gets scanned alongside your feedback for a fuller picture."></textarea>
       </div>
+      <div id="modal-error" style="display:none;font-size:12px;color:#ee0000;margin-bottom:14px;"></div>
       <div style="display:flex;gap:10px;justify-content:flex-end;">
         <button id="modal-cancel" class="btn btn-secondary">Cancel</button>
-        <button id="modal-save" class="btn btn-primary">Save & Complete</button>
+        <button id="modal-save" class="btn btn-primary">Analyze &amp; Complete</button>
       </div>
     </div>
   </div>
@@ -225,18 +264,32 @@ const isCompleted = interview.status === 'completed';
   document.getElementById('modal-cancel')?.addEventListener('click', closeModal);
   document.getElementById('modal-overlay')?.addEventListener('click', closeModal);
 
+  const feedbackInput = document.getElementById('interview-feedback');
+  const feedbackHint = document.getElementById('feedback-hint');
+  feedbackInput?.addEventListener('input', () => {
+    const len = feedbackInput.value.trim().length;
+    feedbackHint.textContent = len === 0 ? '' : len < 15 ? `${len} characters — add a bit more so the analysis has something real to work with.` : '';
+  });
+
   document.getElementById('modal-save')?.addEventListener('click', async () => {
     const btn = document.getElementById('modal-save');
+    const errorEl = document.getElementById('modal-error');
+    errorEl.style.display = 'none';
+
+    const feedback = feedbackInput.value.trim();
+    if (feedback.length < 15) {
+      errorEl.textContent = 'Add a bit more detail to your feedback (at least a sentence or two) before analyzing.';
+      errorEl.style.display = 'block';
+      return;
+    }
+
     btn.disabled = true;
-    btn.textContent = 'Saving…';
+    btn.textContent = 'Analyzing…';
 
     const payload = {
       status: 'completed',
-      commScore: Number(document.getElementById('comm-score').value),
-      techScore: Number(document.getElementById('tech-score').value),
-      confidenceScore: Number(document.getElementById('conf-score').value),
-      recommendation: document.getElementById('recommendation').value,
-      transcriptSummary: document.getElementById('transcript-summary').value,
+      feedback,
+      transcript: document.getElementById('interview-transcript').value.trim(),
     };
 
     const res = await fetch(`/api/interviews/${interviewId}`, {
@@ -248,10 +301,11 @@ const isCompleted = interview.status === 'completed';
     if (res.ok) {
       window.location.reload();
     } else {
-      const err = await res.json();
-      window.hvToast(err.error || 'Failed to complete interview.', 'error');
+      const err = await res.json().catch(() => ({}));
+      errorEl.textContent = err.error || 'Failed to complete interview.';
+      errorEl.style.display = 'block';
       btn.disabled = false;
-      btn.textContent = 'Save & Complete';
+      btn.textContent = 'Analyze & Complete';
     }
   });
 

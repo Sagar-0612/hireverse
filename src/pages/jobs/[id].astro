@@ -196,7 +196,7 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
                     {c.rejected ? (
                       <span class="badge badge-error">Rejected</span>
                     ) : (
-                      <select class="select" style="width:130px;height:28px;font-size:12px;" data-cand-id={c.id} onchange="updateStage(this)">
+                      <select class="select" style="width:130px;height:28px;font-size:12px;" data-cand-id={c.id} data-current-stage={c.currentStage} onchange="updateStage(this)">
                         {c.validStages.map(s => (
                           <option value={s.key} selected={c.currentStage === s.key}>{s.label}</option>
                         ))}
@@ -308,17 +308,20 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
   // Stage transitions
   async function updateStage(sel) {
     const id = sel.dataset.candId;
+    const previousStage = sel.dataset.currentStage || '';
     const currentStage = sel.value;
     const res = await fetch(`/api/candidates/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ currentStage }),
     });
-    if (!res.ok) {
+    if (res.ok) {
+      window.location.reload();
+    } else {
       const err = await res.json().catch(() => ({}));
       window.hvToast(err.error || 'Failed to update stage', 'error');
+      sel.value = previousStage;
     }
-    window.location.reload();
   }
   window.updateStage = updateStage;
 

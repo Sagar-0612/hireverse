@@ -76,6 +76,19 @@ export const PUT: APIRoute = async ({ params, request }) => {
       candidate.currentStage = toStage.key;
       await candidate.save();
 
+      // Interviews still awaiting their session were scheduled for "wherever
+      // the candidate currently sits" — when the candidate moves on before
+      // that session happens, the still-scheduled round should follow them
+      // forward so the journey/interview list keep showing it under the
+      // candidate's real current stage rather than a stage they've left
+      // behind. Completed/cancelled interviews stay frozen as history.
+      if (fromStage) {
+        await Interview.updateMany(
+          { candidateId: candidate._id, status: 'scheduled', pipelineStage: fromStage.key },
+          { $set: { pipelineStage: toStage.key } }
+        );
+      }
+
       await logActivity({
         type: 'stage',
         action: 'stage_changed',
