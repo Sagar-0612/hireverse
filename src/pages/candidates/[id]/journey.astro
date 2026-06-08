@@ -4,7 +4,7 @@ import { connectDB } from "../../../db/connection";
 import { Candidate } from "../../../db/models/Candidate";
 import { Interview } from "../../../db/models/Interview";
 import { Types } from "mongoose";
-import { sortedPipeline, findStage, getValidNextStages, getIconSvg } from "../../../lib/pipeline";
+import { sortedPipeline, findStage, getValidNextStages, getIconSvg, isHiredStage } from "../../../lib/pipeline";
 
 const { id } = Astro.params;
 if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/candidates');
@@ -19,6 +19,10 @@ const candidate = { ...raw, id: raw._id.toString(), jobTitle: job?.title || '' }
 const applied = new Date(raw.createdAt).toISOString();
 const currentStage = findStage(pipeline, candidate.currentStage);
 const validStages = getValidNextStages(pipeline, candidate.currentStage);
+// Once hired or rejected the process is over — neither "schedule another
+// round" nor "reject"/"move stage" are sensible actions left to offer.
+const isHired = !raw.rejected && isHiredStage(pipeline, raw.currentStage);
+const canScheduleOrReject = !raw.rejected && !isHired;
 
 const interviews = await Interview.find({ candidateId: id }).sort({ date: 1, time: 1 }).lean();
 const interviewsByStage = new Map<string, typeof interviews>();
@@ -221,7 +225,7 @@ const totalSteps = pipeline.length || 1;
         )}
       </div>
 
-      {!candidate.rejected && validStages.length > 0 && (
+      {canScheduleOrReject && validStages.length > 0 && (
         <div class="card shadow-lvl-2">
           <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Move to Stage</h3>
           <select id="stage-select" class="select" style="margin-bottom:10px;">
@@ -234,10 +238,12 @@ const totalSteps = pipeline.length || 1;
         </div>
       )}
 
-      <div class="card shadow-lvl-2">
-        <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Schedule Interview</h3>
-        <a href={`/interviews/schedule?candidate=${candidate.id}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">Schedule Next Round</a>
-      </div>
+      {canScheduleOrReject && (
+        <div class="card shadow-lvl-2">
+          <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Schedule Interview</h3>
+          <a href={`/interviews/schedule?candidate=${candidate.id}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">Schedule Next Round</a>
+        </div>
+      )}
     </div>
   </div>
 </AppLayout>

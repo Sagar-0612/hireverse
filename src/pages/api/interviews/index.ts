@@ -3,8 +3,9 @@ import { connectDB } from '../../../db/connection';
 import { Interview } from '../../../db/models/Interview';
 import { Candidate } from '../../../db/models/Candidate';
 import { Job } from '../../../db/models/Job';
-import { findStage, isValidStageTransition } from '../../../lib/pipeline';
+import { findStage, isValidStageTransition, sortedPipeline } from '../../../lib/pipeline';
 import { logActivity } from '../../../lib/activity';
+import { isWithinGap, MIN_GAP_MINUTES } from '../../../lib/scheduling';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
@@ -55,6 +56,35 @@ export const POST: APIRoute = async ({ request }) => {
     const job = await Job.findById(candidate.jobId).lean();
     if (!job) return json({ error: 'Parent job not found.' }, 404);
 
+    const newWindow = { time, duration: Number(duration) || 60 };
+
+    // Same-day double-booking guard: neither the candidate nor the interviewer
+    // can sensibly be in two sessions back-to-back, so both get checked against
+    // every other still-active session that day with at least a 1-hour buffer.
+    const sameDay = await Interview.find({
+      date,
+      status: { $ne: 'cancelled' },
+      $or: [{ candidateId: candidate._id }, { interviewer }],
+    }).lean();
+
+    const candidateConflict = sameDay.find(
+      iv => iv.candidateId.toString() === candidate._id.toString() && isWithinGap(iv, newWindow)
+    );
+    if (candidateConflict) {
+      return json({
+        error: `${candidate.name} already has "${candidateConflict.round}" scheduled on ${date} at ${candidateConflict.time} — leave at least a ${MIN_GAP_MINUTES}-minute gap between sessions for the same candidate.`,
+      }, 409);
+    }
+
+    const interviewerConflict = sameDay.find(
+      iv => iv.interviewer === interviewer && isWithinGap(iv, newWindow)
+    );
+    if (interviewerConflict) {
+      return json({
+        error: `${interviewer} already has "${interviewerConflict.round}" scheduled on ${date} at ${interviewerConflict.time} — leave at least a ${MIN_GAP_MINUTES}-minute gap between their sessions.`,
+      }, 409);
+    }
+
     // The round links to a pipeline stage — default to wherever the candidate
     // currently sits if the scheduler didn't pick one explicitly.
     const requestedStage = pipelineStage ? findStage(job.pipeline, pipelineStage) : null;
@@ -76,29 +106,44 @@ export const POST: APIRoute = async ({ request }) => {
     });
 
     // Scheduling a round for a stage ahead of the candidate's current position
-    // auto-advances them there — replaces the old hardcoded stageOrder lookup.
+    // auto-advances them there. Booking that round is itself the signal that
+    // every stage in between has effectively been cleared (you don't schedule
+    // an "Interview" round for someone who hasn't been screened/shortlisted),
+    // so each intermediate stage gets its own real stageHistory entry — a
+    // clean, ordered progression on the journey rather than a "skipped" jump.
     if (
       linkedStage &&
       linkedStage.key !== candidate.currentStage &&
       isValidStageTransition(job.pipeline, candidate.currentStage, linkedStage.key)
     ) {
       const fromStage = currentStage;
-      candidate.stageHistory.push({
-        stageKey: linkedStage.key,
-        stageLabel: linkedStage.label,
-        fromStageKey: fromStage?.key || '',
-        fromStageLabel: fromStage?.label || '',
-        movedBy: 'Maya Kim',
-        movedAt: new Date(),
-        notes: `Auto-advanced when "${round}" was scheduled`,
-      } as any);
+      const fromOrder = fromStage ? fromStage.order : -1;
+      const passedStages = sortedPipeline(job.pipeline).filter(s => s.order > fromOrder && s.order <= linkedStage.order);
+      const baseTime = Date.now();
+      let prevStage = fromStage;
+      passedStages.forEach((stage, i) => {
+        const isTarget = stage.key === linkedStage.key;
+        candidate.stageHistory.push({
+          stageKey: stage.key,
+          stageLabel: stage.label,
+          fromStageKey: prevStage?.key || '',
+          fromStageLabel: prevStage?.label || '',
+          movedBy: 'Maya Kim',
+          movedAt: new Date(baseTime + i),
+          notes: isTarget
+            ? `Auto-advanced when "${round}" was scheduled`
+            : `Auto-advanced on the way to "${linkedStage.label}" when "${round}" was scheduled`,
+        } as any);
+        prevStage = stage;
+      });
       candidate.currentStage = linkedStage.key;
       await candidate.save();
 
+      const passedLabels = passedStages.slice(0, -1).map(s => s.label);
       await logActivity({
         type: 'stage',
         action: 'stage_changed',
-        message: `${candidate.name} moved from "${fromStage?.label || 'the start'}" to "${linkedStage.label}" (auto-advanced by scheduling "${round}")`,
+        message: `${candidate.name} moved from "${fromStage?.label || 'the start'}" to "${linkedStage.label}"${passedLabels.length ? ` (passing through ${passedLabels.join(', ')})` : ''} — auto-advanced by scheduling "${round}"`,
         entityType: 'candidate',
         entityId: candidate._id.toString(),
         jobId: candidate.jobId.toString(),

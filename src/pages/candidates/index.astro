@@ -2,8 +2,10 @@
 import AppLayout from "../../layouts/AppLayout.astro";
 import { connectDB } from "../../db/connection";
 import { Candidate } from "../../db/models/Candidate";
+import { Interview } from "../../db/models/Interview";
 import { Job } from "../../db/models/Job";
 import { findStage } from "../../lib/pipeline";
+import { blendOverallScore } from "../../lib/candidateSummary";
 
 await connectDB();
 const rawCandidates = await Candidate.find()
@@ -11,28 +13,46 @@ const rawCandidates = await Candidate.find()
   .sort({ score: -1 })
   .lean();
 
+// One query for every candidate's interviews, grouped client-side — so the
+// list's headline score/recommendation is the same live resume+interview
+// blend the detail page shows, not a frozen resume-upload-time snapshot,
+// without an N+1 query per row.
+const allInterviews = await Interview.find(
+  { candidateId: { $in: rawCandidates.map(c => c._id) } },
+  'candidateId status analysis commScore techScore confidenceScore'
+).lean();
+const interviewsByCandidate = new Map<string, typeof allInterviews>();
+for (const iv of allInterviews) {
+  const key = iv.candidateId.toString();
+  const list = interviewsByCandidate.get(key);
+  if (list) list.push(iv); else interviewsByCandidate.set(key, [iv]);
+}
+
 const candidates = rawCandidates.map((c, i) => {
   const job = c.jobId as any;
   const stage = findStage(job?.pipeline || [], c.currentStage);
   const stageLabel = c.rejected ? 'Rejected' : (stage?.label || c.currentStage);
   const stageColor = c.rejected ? '#ef4444' : (stage?.color || '#6b7280');
+  const blended = blendOverallScore(c.score, interviewsByCandidate.get(c._id.toString()) || []);
   return {
     id: c._id.toString(),
     rank: i + 1,
     name: c.name,
     location: c.location,
     locationConfidence: c.locationConfidence,
-    score: c.score,
+    score: blended.overallScore,
+    resumeScore: c.score,
+    roundsConsidered: blended.roundsConsidered,
     experience: c.experience,
     skillsMatch: c.skillsMatch,
     educationMatch: c.educationMatch,
     stageLabel,
     stageColor,
-    recommendation: c.recommendation,
+    recommendation: blended.overallLabel,
     jobId: job?._id?.toString() || '',
     jobTitle: job?.title || '',
   };
-});
+}).sort((a, b) => b.score - a.score).map((c, i) => ({ ...c, rank: i + 1 }));
 
 // Filter options reflect only stage labels actually present across loaded
 // candidates (plus the orthogonal "Rejected" outcome) — never a fixed enum.
@@ -93,12 +113,17 @@ const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } 
                   <div class="avatar" style="width:30px;height:30px;font-size:11px;">{c.name.split(' ').map((n: string) => n[0]).join('')}</div>
                   <div>
                     <a href={`/candidates/${c.id}`} style="font-size:13px;font-weight:500;color:var(--fg);text-decoration:none;">{c.name}</a>
-                    <div style="font-size:11px;color:var(--fg-mute);">{c.location}{c.locationConfidence === 'low' && c.location !== 'Location Not Found' ? ' (low confidence)' : ''}</div>
+                    <div style="font-size:11px;color:var(--fg-mute);">{c.location}</div>
                   </div>
                 </div>
               </td>
               <td style="font-size:13px;color:var(--fg-body);">{c.jobTitle || '—'}</td>
-              <td><div class={`score-ring ${c.score >= 85 ? 'score-high' : c.score >= 70 ? 'score-mid' : 'score-low'}`}>{c.score}</div></td>
+              <td>
+                <div
+                  class={`score-ring ${c.score >= 85 ? 'score-high' : c.score >= 70 ? 'score-mid' : 'score-low'}`}
+                  title={c.roundsConsidered > 0 ? `Resume ${c.resumeScore} blended with ${c.roundsConsidered} analyzed interview${c.roundsConsidered === 1 ? '' : 's'} → ${c.score}` : `Resume score (no analyzed interviews yet)`}
+                >{c.score}</div>
+              </td>
               <td style="font-family:'JetBrains Mono',monospace;font-size:12px;">{c.experience} yrs</td>
               <td>
                 <div style="display:flex;align-items:center;gap:6px;">

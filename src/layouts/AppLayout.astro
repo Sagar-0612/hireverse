@@ -85,7 +85,8 @@ const navItems = [
           <span class="search-icon">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.5"/><path d="M10 10l2.5 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </span>
-          <input type="text" class="input search-input" placeholder="Search jobs, candidates…" style="height:32px;font-size:13px;" />
+          <input type="text" id="global-search-input" class="input search-input" placeholder="Search jobs, candidates…" style="height:32px;font-size:13px;" autocomplete="off" />
+          <div id="global-search-results" class="search-results"></div>
         </div>
 
         <div style="flex:1;"></div>
@@ -288,6 +289,108 @@ const navItems = [
       const o = typeof opts === "string" ? { message: opts } : (opts || {});
       return openDialog({ ...o, withInput: true }).then((r) => (r === "ok" ? confirmInputEl.value : null));
     };
+
+    // ── Global search (topbar) ──
+    const searchInput = document.getElementById("global-search-input");
+    const searchResults = document.getElementById("global-search-results");
+
+    function escapeHtml(s) {
+      return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    function renderSearchResults(data, query) {
+      if (!searchResults) return;
+      const jobs = data.jobs || [];
+      const candidates = data.candidates || [];
+      if (!jobs.length && !candidates.length) {
+        searchResults.innerHTML = `<div class="search-results-empty">No jobs or candidates match "${escapeHtml(query)}"</div>`;
+        searchResults.classList.add("show");
+        return;
+      }
+      let html = "";
+      if (jobs.length) {
+        html += `<div class="search-results-group-label">Jobs</div>`;
+        for (const j of jobs) {
+          const meta = [j.department, j.location].filter(Boolean).join(" · ");
+          html += `<a class="search-result-item" href="/jobs/${j._id}">
+            <span class="search-result-title">${escapeHtml(j.title)}</span>
+            <span class="search-result-meta">${escapeHtml(meta || "Job")}</span>
+          </a>`;
+        }
+      }
+      if (candidates.length) {
+        html += `<div class="search-results-group-label">Candidates</div>`;
+        for (const c of candidates) {
+          const meta = [c.currentStage, c.location].filter(Boolean).join(" · ");
+          html += `<a class="search-result-item" href="/candidates/${c._id}">
+            <span class="search-result-title">${escapeHtml(c.name)}</span>
+            <span class="search-result-meta">${escapeHtml(meta || c.email || "Candidate")}</span>
+          </a>`;
+        }
+      }
+      searchResults.innerHTML = html;
+      searchResults.classList.add("show");
+    }
+
+    let searchDebounce = null;
+    let searchAbort = null;
+    let searchSeq = 0;
+
+    function runSearch(query) {
+      const seq = ++searchSeq;
+      if (searchAbort) searchAbort.abort();
+      const controller = new AbortController();
+      searchAbort = controller;
+      fetch(`/api/search?q=${encodeURIComponent(query)}`, { signal: controller.signal })
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error("Search failed"))))
+        .then((data) => {
+          if (seq !== searchSeq) return;
+          renderSearchResults(data, query);
+        })
+        .catch((err) => {
+          if (err?.name === "AbortError" || seq !== searchSeq) return;
+          if (searchResults) {
+            searchResults.innerHTML = `<div class="search-results-empty">Search is unavailable right now — try again in a moment.</div>`;
+            searchResults.classList.add("show");
+          }
+        });
+    }
+
+    searchInput?.addEventListener("input", () => {
+      const query = searchInput.value.trim();
+      if (searchDebounce) clearTimeout(searchDebounce);
+      if (query.length < 2) {
+        searchResults?.classList.remove("show");
+        if (searchAbort) searchAbort.abort();
+        return;
+      }
+      searchDebounce = setTimeout(() => runSearch(query), 250);
+    });
+
+    searchInput?.addEventListener("focus", () => {
+      if (searchInput.value.trim().length >= 2 && searchResults?.innerHTML) {
+        searchResults.classList.add("show");
+      }
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!searchResults || !searchInput) return;
+      if (e.target === searchInput || searchResults.contains(e.target)) return;
+      searchResults.classList.remove("show");
+    });
+
+    searchInput?.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        searchResults?.classList.remove("show");
+        searchInput.blur();
+      } else if (e.key === "Enter") {
+        const first = searchResults?.querySelector(".search-result-item");
+        if (first) {
+          e.preventDefault();
+          window.location.href = first.getAttribute("href");
+        }
+      }
+    });
   </script>
 </body>
 </html>

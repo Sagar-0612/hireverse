@@ -44,6 +44,8 @@ export interface ICandidate extends Document {
   resumeType: string;
   resumeBase64: string;
   skills: string[];
+  practicalSkills: string[];
+  achievements: string[];
   notes: string;
   createdAt: Date;
   updatedAt: Date;
@@ -71,6 +73,8 @@ const CandidateSchema = new Schema<ICandidate>(
     resumeType:         { type: String, default: '' },
     resumeBase64:       { type: String, default: '' },
     skills:             [{ type: String }],
+    practicalSkills:    { type: [String], default: [] },
+    achievements:       { type: [String], default: [] },
     notes:              { type: String, default: '' },
   },
   { timestamps: true }

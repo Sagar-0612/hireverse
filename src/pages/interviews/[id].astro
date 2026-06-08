@@ -10,7 +10,7 @@ if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/interviews');
 
 await connectDB();
 const raw = await Interview.findById(id)
-  .populate('candidateId', 'name')
+  .populate('candidateId', 'name rejected')
   .populate('jobId', 'title pipeline')
   .lean();
 if (!raw) return Astro.redirect('/interviews');
@@ -23,6 +23,7 @@ const interview = {
   id: raw._id.toString(),
   candidateName: (raw.candidateId as any)?.name || 'Unknown',
   candidateId: (raw.candidateId as any)?._id?.toString() || '',
+  candidateRejected: !!(raw.candidateId as any)?.rejected,
   jobTitle: job?.title || '',
   jobId: job?._id?.toString() || '',
   stageLabel: stage?.label || '',
@@ -30,6 +31,10 @@ const interview = {
 };
 
 const isCompleted = interview.status === 'completed';
+// Legacy records completed before this analysis system existed carry scores
+// but no real `analysis` — flag them so the UI offers a path to backfill real
+// feedback instead of silently showing empty feedback/transcript sections.
+const needsAnalysis = isCompleted && !interview.analysis;
 ---
 
 <AppLayout title={`${interview.candidateName} · Interview`} activeNav="interviews">
@@ -45,6 +50,9 @@ const isCompleted = interview.status === 'completed';
     </div>
     {!isCompleted && (
       <button id="complete-btn" class="btn btn-primary btn-sm">Mark as Completed</button>
+    )}
+    {needsAnalysis && (
+      <button id="add-feedback-btn-top" class="btn btn-primary btn-sm">Add Feedback &amp; Analyze</button>
     )}
   </div>
 
@@ -134,7 +142,10 @@ const isCompleted = interview.status === 'completed';
                 </div>
               </>
             ) : (
-              <p style="font-size:13px;color:var(--fg-mute);">No analysis recorded for this interview.</p>
+              <div style="background:var(--bg-soft);border-radius:6px;padding:16px;border:1px dashed var(--border);">
+                <p style="font-size:13px;color:var(--fg-body);line-height:1.6;margin:0 0 12px;">This interview was marked completed before detailed feedback was captured, so there's no AI analysis on file — that's also why the feedback and transcript sections below are empty. Add the interviewer's real account now and the system will generate a genuine, text-grounded verdict from it.</p>
+                <button id="add-feedback-btn" class="btn btn-primary btn-sm">Add Feedback &amp; Analyze</button>
+              </div>
             )}
           </div>
 
@@ -175,15 +186,19 @@ const isCompleted = interview.status === 'completed';
           <div class="card shadow-lvl-2">
             <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Suggested Next Step</h3>
             <p style="font-size:12px;color:var(--fg-mute);margin:0 0 12px;line-height:1.5;">
-              {interview.analysis?.decision === 'advance'
-                ? 'The analysis leans toward moving this candidate forward — schedule the next round when ready.'
-                : interview.analysis
-                  ? 'The analysis leans toward holding here — review the concerns above before deciding whether to reject or give another chance.'
-                  : 'Review the recommendation above, then choose how to proceed.'}
+              {interview.candidateRejected
+                ? `${interview.candidateName} has since been rejected — the process for them has ended, so no further rounds should be scheduled regardless of how this interview went.`
+                : interview.analysis?.decision === 'advance'
+                  ? 'The analysis leans toward moving this candidate forward — schedule the next round when ready.'
+                  : interview.analysis
+                    ? 'The analysis leans toward holding here — review the concerns above before deciding whether to reject or give another chance.'
+                    : 'Review the recommendation above, then choose how to proceed.'}
             </p>
             <div style="display:flex;flex-direction:column;gap:8px;">
-              <a href={`/interviews/schedule?candidate=${interview.candidateId}`} class="btn btn-primary" style="width:100%;border-radius:6px;">Schedule Next Round</a>
-              <a href={`/candidates/${interview.candidateId}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">View Candidate</a>
+              {!interview.candidateRejected && (
+                <a href={`/interviews/schedule?candidate=${interview.candidateId}`} class="btn btn-primary" style="width:100%;border-radius:6px;">Schedule Next Round</a>
+              )}
+              <a href={`/candidates/${interview.candidateId}`} class={`btn ${interview.candidateRejected ? 'btn-primary' : 'btn-secondary'}`} style="width:100%;border-radius:6px;">View Candidate</a>
             </div>
           </div>
         </div>
@@ -261,6 +276,8 @@ const isCompleted = interview.status === 'completed';
 
   document.getElementById('complete-btn')?.addEventListener('click', openModal);
   document.getElementById('complete-btn-side')?.addEventListener('click', openModal);
+  document.getElementById('add-feedback-btn')?.addEventListener('click', openModal);
+  document.getElementById('add-feedback-btn-top')?.addEventListener('click', openModal);
   document.getElementById('modal-cancel')?.addEventListener('click', closeModal);
   document.getElementById('modal-overlay')?.addEventListener('click', closeModal);
 

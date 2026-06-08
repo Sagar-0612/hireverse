@@ -84,6 +84,8 @@ export const POST: APIRoute = async ({ request }) => {
         resumeType: mimeType,
         resumeBase64: base64,
         skills: analysis.skills,
+        practicalSkills: analysis.practicalSkills,
+        achievements: analysis.achievements,
       });
 
       created.push({ ...candidate.toObject(), _id: candidate._id.toString() });

@@ -29,6 +29,20 @@ interface SignalPattern {
 const POS = (re: RegExp, label: string, weight = 1): SignalPattern => ({ re, label, weight });
 const NEG = (re: RegExp, label: string, weight = 1): SignalPattern => ({ re, label, weight: -weight });
 
+// Real interview transcripts are first-person dialogue, not an interviewer's
+// third-person summary — "the candidate showed gaps" never appears verbatim;
+// what appears is the candidate themselves saying "I don't know", "I haven't
+// worked with that", "I can't recall an example". A *single* honest admission
+// like that is healthy self-awareness, not a concern — everyone has gaps. A
+// *pattern* of them across a conversation is the real signal, so these are
+// counted (not just detected once) and only weighed in once they cluster.
+const UNCERTAINTY_ADMISSION_RE = /\bi\s+(?:don'?t|do\s+not)\s+(?:know|remember|recall)\b|\bi\s+(?:can'?t|cannot)\s+(?:recall|remember|think\s+of\s+(?:any|a))\b|\bi\s+(?:haven'?t|have\s+not)\s+(?:worked\s+(?:much\s+)?(?:on|with)|used|done\s+much|tried|written)\b|\bnot\s+much\b[^.?!]{0,25}\b(?:experience|exposure|knowledge|familiarity)\b|\bi\s+(?:have\s+)?(?:heard|read)\s+(?:about|of)\s+(?:it|that|them)\s+but\s+(?:haven'?t|have\s+not|never)\b|\bi\s+(?:usually|just)\s+(?:use\s+)?whichever\s+(?:one\s+)?works?\b|\bi\s+(?:don'?t|do\s+not)\s+have\s+(?:much|any)\s+(?:experience|exposure|idea)\b/gi;
+
+function countMatches(text: string, re: RegExp): number {
+  const matches = text.match(re);
+  return matches ? matches.length : 0;
+}
+
 // Each dimension is scored from the net balance of matched phrases — the same
 // "count what's actually there" approach resumeAnalysis uses for skills.
 const TECHNICAL_SIGNALS: SignalPattern[] = [
@@ -44,6 +58,12 @@ const TECHNICAL_SIGNALS: SignalPattern[] = [
   NEG(/\b(?:guessed|memoriz(?:ed|ing)|rote)\b[^.?!]{0,40}\b(?:without|with no|lacking)\b[^.?!]{0,30}\b(?:understanding|reasoning|comprehension)\b/i, 'answers seemed memorized rather than understood', 2),
   NEG(/\bincorrect (?:approach|solution|answer|implementation|reasoning)\b/i, 'landed on an incorrect technical approach', 2),
   NEG(/\bcouldn'?t (?:get|write|produce)[^.?!]{0,30}\bworking\b/i, 'could not produce a working solution', 2.5),
+  // Distinct from the "lacks ... technical/domain ... knowledge" pattern above —
+  // this catches the equally common phrasing where the interviewer names the
+  // *role's bar* directly ("lacks the depth expected for a Senior X role")
+  // without an intervening domain-keyword. This is the interviewer's own
+  // explicit JD-relative judgment, so it carries real weight.
+  NEG(/\blacks?\s+(?:the\s+)?(?:depth|experience|seniority|maturity|skills?|expertise)\b[^.?!]{0,60}\b(?:expected|required|needed|necessary)\b[^.?!]{0,50}\b(?:senior|lead|principal|staff|architect|role|position|level)\b/i, 'interviewer explicitly judged the candidate as not yet at the depth this specific role calls for', 3.5),
 ];
 
 const COMMUNICATION_SIGNALS: SignalPattern[] = [
@@ -55,6 +75,10 @@ const COMMUNICATION_SIGNALS: SignalPattern[] = [
   NEG(/\b(?:did not|didn'?t|failed to)\b[^.?!]{0,30}\b(?:answer|address)\b[^.?!]{0,20}\b(?:the )?question\b/i, 'frequently did not directly answer the question asked', 2.5),
   NEG(/\b(?:talked over|interrupted|dominated the conversation|monopoli[sz]ed)\b/i, 'talked over the interviewer / dominated the conversation', 2),
   NEG(/\b(?:long[- ]winded|went off[- ]topic|veered off[- ]topic|lost track of the question)\b/i, 'tended to go off-topic or lose the thread', 1.5),
+  // Verbatim transcript close — "no questions for us?" / "no, I don't have any
+  // questions" — is one of the few things a transcript reveals about genuine
+  // curiosity that written feedback rarely restates explicitly.
+  NEG(/\bno,?\s*i\s+(?:don'?t|do\s+not)\s+have\s+(?:any\s+)?questions?\b/i, 'showed little curiosity or engagement — had no questions for the interviewer at the close', 1),
 ];
 
 const CONFIDENCE_SIGNALS: SignalPattern[] = [
@@ -132,8 +156,10 @@ function buildReasoning(opts: {
   strengths: string[];
   concerns: string[];
   redFlag: boolean;
+  jobTitle: string;
+  jobLevel: string;
 }): string {
-  const { candidateName, round, hasTranscript, techScore, commScore, confidenceScore, overallScore, recommendation, decision, strengths, concerns, redFlag } = opts;
+  const { candidateName, round, hasTranscript, techScore, commScore, confidenceScore, overallScore, recommendation, decision, strengths, concerns, redFlag, jobTitle, jobLevel } = opts;
   const sourceNote = hasTranscript ? "the interviewer's written feedback and the interview transcript" : "the interviewer's written feedback";
 
   const tier = (n: number) => n >= 80 ? 'strong' : n >= 65 ? 'solid' : n >= 50 ? 'mixed' : 'weak';
@@ -141,6 +167,20 @@ function buildReasoning(opts: {
 
   sentences.push(`Based on ${sourceNote} for the "${round}" round, ${candidateName} comes across with ${tier(overallScore)} overall signal (${overallScore}/100).`);
   sentences.push(`Technical assessment: ${tier(techScore)} (${techScore}/100). Communication: ${tier(commScore)} (${commScore}/100). Confidence and composure: ${tier(confidenceScore)} (${confidenceScore}/100).`);
+
+  // Grounds the read in the JD it's actually being measured against — the same
+  // transcript answers can be a fine showing for an entry-level round and a
+  // real concern for a senior one, and a verdict that doesn't say which bar
+  // it's using isn't one a recruiter can sanity-check.
+  const seniorish = /senior|lead|principal|staff|architect/i.test(jobLevel) || /senior|lead|principal|staff|architect/i.test(jobTitle);
+  if (jobLevel || jobTitle) {
+    const roleNote = jobTitle ? `the "${jobTitle}" role` : 'this role';
+    const levelNote = jobLevel ? ` (pegged at ${jobLevel})` : '';
+    const calibration = seniorish && concerns.length
+      ? ` At that level, the gaps and uncertainty noted below carry materially more weight than they would in an entry-level round, where some of the same answers might be perfectly normal.`
+      : '';
+    sentences.push(`This read is being measured against ${roleNote}${levelNote} specifically — not a generic bar.${calibration}`);
+  }
 
   if (strengths.length) {
     sentences.push(`What stood out positively — ${strengths.slice(0, 3).join('; ')}.`);
@@ -172,17 +212,41 @@ export interface AnalyzeInterviewInput {
   round: string;
   feedback: string;
   transcript?: string;
+  // The role this interview is actually being measured against — without this,
+  // "solid fundamentals" reads the same whether the bar is an internship or a
+  // staff role. Optional only because older callers may not have it on hand;
+  // every code path that can supply it should.
+  jobTitle?: string;
+  jobLevel?: string;
 }
 
 export function analyzeInterview(input: AnalyzeInterviewInput): InterviewAnalysisResult {
   const feedback = (input.feedback || '').trim();
   const transcript = (input.transcript || '').trim();
   const combined = [feedback, transcript].filter(Boolean).join('\n');
+  const jobTitle = (input.jobTitle || '').trim();
+  const jobLevel = (input.jobLevel || '').trim();
 
   const tech = scanText(combined, TECHNICAL_SIGNALS);
   const comm = scanText(combined, COMMUNICATION_SIGNALS);
   const conf = scanText(combined, CONFIDENCE_SIGNALS);
   const verdict = scanText(combined, VERDICT_SIGNALS);
+
+  // First-person admissions ("I don't know that", "I haven't worked with X")
+  // are real transcript content the third-person-oriented lexicon above can't
+  // see — and a *single* one is healthy honesty, not a concern. It's the
+  // density across a conversation that turns "everyone has gaps" into "this
+  // person's exposure looks shallow" — so this only weighs in once a real
+  // pattern (3+) shows up, and the label states the literal count so the
+  // claim stays checkable against the transcript.
+  const uncertaintyCount = countMatches(combined, UNCERTAINTY_ADMISSION_RE);
+  if (uncertaintyCount >= 3) {
+    const penalty = Math.min(uncertaintyCount, 8) * 0.9;
+    tech.net -= penalty;
+    conf.net -= penalty * 0.5;
+    const label = `repeatedly said they didn't know, didn't remember, or hadn't worked with core topics raised (${uncertaintyCount}× across the conversation) — a pattern of shallow exposure rather than an isolated honest gap`;
+    tech.hits.push({ label, positive: false, weight: penalty });
+  }
 
   const techScore = scoreFromNet(tech.net);
   const commScore = scoreFromNet(comm.net);
@@ -229,6 +293,8 @@ export function analyzeInterview(input: AnalyzeInterviewInput): InterviewAnalysi
     overallScore,
     recommendation,
     decision,
+    jobTitle,
+    jobLevel,
     strengths,
     concerns,
     redFlag,

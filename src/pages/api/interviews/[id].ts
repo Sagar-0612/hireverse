@@ -19,7 +19,12 @@ export const PUT: APIRoute = async ({ params, request }) => {
     const before = await Interview.findById(id).lean();
     if (!before) return json({ error: 'Not found' }, 404);
 
-    const completingNow = body.status === 'completed' && before.status !== 'completed';
+    // Normally this fires only on the scheduled→completed transition. It also
+    // fires for interviews that are *already* marked completed but carry no
+    // `analysis` — legacy records from before this analysis system existed —
+    // so a recruiter can retroactively add real feedback and get a genuine,
+    // text-grounded verdict instead of being stuck with placeholder scores.
+    const completingNow = body.status === 'completed' && (before.status !== 'completed' || !before.analysis);
 
     // Completion is judged from what the interviewer actually observed — the
     // analysis (and every score/recommendation derived from it) is computed
@@ -32,12 +37,15 @@ export const PUT: APIRoute = async ({ params, request }) => {
       }
 
       const candidate = await Candidate.findById(before.candidateId, 'name').lean();
+      const job = await Job.findById(before.jobId, 'title level').lean();
       const transcript = typeof body.transcript === 'string' ? body.transcript.trim() : '';
       const result = analyzeInterview({
         candidateName: candidate?.name || 'The candidate',
         round: before.round,
         feedback,
         transcript,
+        jobTitle: job?.title || '',
+        jobLevel: job?.level || '',
       });
 
       body.feedback = feedback;

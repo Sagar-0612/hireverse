@@ -19,6 +19,14 @@ export interface ResumeAnalysis {
   locationConfidence: LocationConfidence;
   experience: number;
   skills: string[];
+  // Subset of `skills` whose mention sits near language describing real work
+  // ("built", "Tech Stack:", "deployed", etc.) rather than just being named —
+  // the resume's own text is the only evidence trail this traces back to.
+  practicalSkills: string[];
+  // Concrete standout signals lifted verbatim from the resume — certifications,
+  // awards, hackathon wins, publications — so "extra achievements" in the
+  // assessment point at literal lines rather than an impression.
+  achievements: string[];
   skillsMatch: number;
   educationMatch: number;
   score: number;
@@ -85,7 +93,7 @@ function extractNameFromFilename(filename: string): string {
 // its own line. Those satisfy the "every word looks like an acronym/initial"
 // heuristic just as well as an all-caps name like "JOHN SMITH" does, so both
 // the name and location heuristics need to recognize and skip them.
-const SECTION_HEADER_RE = /\b(summary|profile|objective|education|credentials|qualifications|experience|professional|technical|proficienc(?:y|ies)|skills?|projects?|certifications?|training|achievements?|accolades|references?|publications?|awards?|languages?|interests?|activities|volunteer|employment|career|background|highlights|expertise|competenc(?:y|ies)|tools|platforms|responsibilities)\b/i;
+const SECTION_HEADER_RE = /\b(summary|profile|objective|education|credentials|qualifications|experience|professional|technical|proficienc(?:y|ies)|skills?|projects?|certifications?|certificates?|training|achievements?|accolades|references?|publications?|awards?|languages?|interests?|activities|volunteer|employment|career|background|highlights|expertise|competenc(?:y|ies)|tools|platforms|responsibilities|contact|personal|details|info(?:rmation)?|links|socials?|portfolio|hobbies|strengths|declaration|address(?:es)?)\b/i;
 
 const NAME_NOISE = /resume|curriculum|vitae|\bcv\b|address|objective|summary|profile|contact|linkedin|github|http|www\.|email|phone|@/i;
 
@@ -159,8 +167,43 @@ const TITLE_NOISE = /engineer|manager|developer|designer|analyst|specialist|lead
 // us rule that out instead of reporting "Sagar Pawar" as his own location.
 const normalizeForCompare = (s: string) => s.replace(/[^a-zA-Z\s]/g, ' ').trim().toLowerCase().replace(/\s+/g, ' ');
 
-function extractLocation(text: string, candidateName: string): { location: string; confidence: LocationConfidence } {
-  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(0, 12);
+// A degree's or former employer's city ("Ambedkar Nagar, Uttar Pradesh" for a
+// college) reads identically to a candidate's home city in isolation — the
+// only thing that actually distinguishes them on the page is *where* they
+// sit. Resumes group personal contact details together, so a location-shaped
+// line sitting right next to the parsed email/phone is far more likely to be
+// where the candidate actually lives than one sitting next to a degree's date
+// range. This scores every candidate line by its line-distance to the nearest
+// contact anchor and prefers whichever sits closest — concrete and inspectable
+// rather than a guess from raw position-on-page.
+function findLocationNearContact(
+  lines: string[],
+  anchors: number[],
+  isUsable: (line: string) => boolean,
+  clean: (line: string) => string,
+): { location: string; confidence: LocationConfidence } | null {
+  if (!anchors.length) return null;
+  const MAX_DISTANCE = 3;
+  let best: { location: string; confidence: LocationConfidence; distance: number; strict: boolean } | null = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    if (!isUsable(lines[i])) continue;
+    const distance = Math.min(...anchors.map(a => Math.abs(i - a)));
+    if (distance === 0 || distance > MAX_DISTANCE) continue;
+    const c = clean(lines[i]);
+    const strict = LOCATION_STRICT.test(c);
+    const loose = !strict && LOCATION_LOOSE.test(c);
+    if (!strict && !loose) continue;
+    if (!best || distance < best.distance || (distance === best.distance && strict && !best.strict)) {
+      best = { location: c, confidence: 'high', distance, strict };
+    }
+  }
+  return best ? { location: best.location, confidence: best.confidence } : null;
+}
+
+function extractLocation(text: string, candidateName: string, email: string, phone: string): { location: string; confidence: LocationConfidence } {
+  const allLines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const lines = allLines.slice(0, 12);
   const clean = (l: string) => l.replace(/[|•].*$/, '').trim();
   const isNoisy = (l: string) => /@|\d{4,}|https?:/i.test(l);
   const normalizedName = normalizeForCompare(candidateName);
@@ -168,6 +211,19 @@ function extractLocation(text: string, candidateName: string): { location: strin
     const n = normalizeForCompare(l);
     return n.length > 0 && n === normalizedName;
   };
+  const isUsable = (l: string) => !isNoisy(l) && l.length < 60 && !isCandidateName(l) && !SECTION_HEADER_RE.test(l);
+
+  // Priority 1: a location-shaped line sitting beside the candidate's own
+  // email or phone — the strongest, most concrete signal a resume gives.
+  const phoneDigits = phone.replace(/\D/g, '');
+  const anchors: number[] = [];
+  for (let i = 0; i < allLines.length; i++) {
+    const l = allLines[i];
+    if (email && l.toLowerCase().includes(email.toLowerCase())) anchors.push(i);
+    else if (phoneDigits.length >= 7 && l.replace(/\D/g, '').includes(phoneDigits.slice(-7))) anchors.push(i);
+  }
+  const nearContact = findLocationNearContact(allLines, anchors, isUsable, clean);
+  if (nearContact) return nearContact;
 
   for (const line of lines) {
     if (isNoisy(line) || line.length >= 60 || isCandidateName(line)) continue;
@@ -237,7 +293,12 @@ function extractExperience(text: string): number {
   let m: RegExpExecArray | null;
   RANGE_RE.lastIndex = 0;
   while ((m = RANGE_RE.exec(text)) !== null) {
-    const windowStart = Math.max(0, m.index - 60);
+    // Wide enough to reliably cover the 1-2 lines before the date range even
+    // when a location/institute line sits in between the degree title and its
+    // dates (e.g. "B.tech (...)\nAmbedkar Nagar, UP\n2018 - 2022") — a
+    // narrower window clips the leading "B.tech" mid-word, the education
+    // exclusion below silently misses it, and a degree gets counted as work.
+    const windowStart = Math.max(0, m.index - 110);
     const windowEnd = Math.min(text.length, m.index + m[0].length + 30);
     if (EDU_NEARBY_RE.test(text.slice(windowStart, windowEnd))) continue;
 
@@ -336,6 +397,53 @@ function matchSkills(text: string, skills: string[]): string[] {
   });
 }
 
+// "Listed in a skills box" and "actually built something with it" are very
+// different signals for a recruiter — a JD asking for Kubernetes isn't really
+// satisfied by a resume that names it once with nothing behind it. This treats
+// a skill as practically demonstrated only when its mention sits near language
+// that describes doing real work with it (built/used/deployed/"Tech Stack:"/
+// "project", etc.), not merely appearing anywhere on the page.
+const PRACTICAL_CUE_RE = /\b(built|build|develop(?:ed|ing|er)?|implement(?:ed|ing|ation)?|creat(?:ed|ing|or)|design(?:ed|ing|er)?|architect(?:ed|ing|ure)?|deploy(?:ed|ing|ment)?|engineer(?:ed|ing)?|integrat(?:ed|ion|ing)?|migrat(?:ed|ion|ing)?|automat(?:ed|ion|ing)?|optimi[sz](?:ed|ation|ing)?|maintain(?:ed|ing|ence)?|wrote|written|writing|work(?:ed|ing)?|us(?:ed|ing)|utili[sz](?:ed|ing)?|\bled\b|lead(?:ing)?|manag(?:ed|ing|ement)?|collaborat(?:ed|ion|ing)?|contribut(?:ed|ion|ing)?|tech\s*stack|stack\s*[:\-]|project[s]?|application[s]?|platform[s]?|system[s]?|feature[s]?|module[s]?|pipeline[s]?|api[s]?|service[s]?|product[s]?|website[s]?|dashboard[s]?|tool(?:ed|ing|s)?)\b/i;
+
+function hasPracticalEvidence(lowerText: string, skill: string): boolean {
+  const s = dropDots(skill.toLowerCase().trim());
+  if (!s) return false;
+  const escaped = s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(?:^|[^a-z0-9+#])${escaped}(?:[^a-z0-9+#]|$)`, 'gi');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(lowerText)) !== null) {
+    const windowStart = Math.max(0, m.index - 100);
+    const windowEnd = Math.min(lowerText.length, m.index + m[0].length + 100);
+    if (PRACTICAL_CUE_RE.test(lowerText.slice(windowStart, windowEnd))) return true;
+    if (re.lastIndex === m.index) re.lastIndex++;
+  }
+  return false;
+}
+
+// Surfaces concrete, JD-relevant standout signals — certifications, awards,
+// hackathon wins, publications — so "extra achievements" in the assessment
+// trace back to literal text on the resume rather than a vibe.
+const ACHIEVEMENT_CUE_RE = /\b(certified|certifications?|certificate[ds]?|award(?:ed|s)?|winner|won\b|hackathon|patent(?:ed|s)?|publish(?:ed)?|publications?|scholarships?|rank(?:ed)?\s*#?\d|top\s+\d+\s*%|honou?rs?|dean'?s\s+list|gold\s+medal|silver\s+medal|bronze\s+medal|first\s+place|merit\b|distinction|finalist|semi-?finalist|\d+(?:st|nd|rd|th)\s+(?:place|rank|position))\b/i;
+const ACHIEVEMENT_HEADER_ONLY_RE = /^(certificates?|certifications?|awards?|achievements?|honou?rs?|accolades|publications?|patents?|recognition[s]?)$/i;
+
+function extractAchievements(text: string): string[] {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const line of lines) {
+    if (ACHIEVEMENT_HEADER_ONLY_RE.test(line)) continue;
+    if (line.length < 12 || line.length > 160) continue;
+    if (!ACHIEVEMENT_CUE_RE.test(line)) continue;
+    const cleaned = line.replace(/^[•\-*•●‣]\s*/, '').trim();
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(cleaned);
+    if (out.length >= 4) break;
+  }
+  return out;
+}
+
 const DEGREE_LEVELS: [RegExp, number][] = [
   [/\bph\.?d\.?\b|doctorate/i, 3],
   [/\bmaster'?s?\b|\bm\.?sc\.?\b|\bm\.?s\.?\b|\bmba\b|\bm\.?tech\b|\bm\.?eng\b/i, 2],
@@ -384,6 +492,24 @@ function scoreExperience(years: number, level: string): number {
   return Math.max(25, 95 - gap * 18);
 }
 
+// A skill that's actually been put to work counts for more than one that's
+// merely named — this is where "check whether work has been done on those
+// skills" actually changes the number, not just the narrative around it.
+const PRACTICAL_WEIGHT = 1;
+const LISTED_ONLY_WEIGHT = 0.65;
+
+function weightedSkillScore(required: string[], matched: string[], practical: Set<string>): number | null {
+  if (!required.length) return null;
+  const matchedLower = new Set(matched.map(m => m.toLowerCase()));
+  let sum = 0;
+  for (const skill of required) {
+    const key = skill.toLowerCase();
+    if (!matchedLower.has(key)) continue;
+    sum += practical.has(key) ? PRACTICAL_WEIGHT : LISTED_ONLY_WEIGHT;
+  }
+  return Math.round((sum / required.length) * 100);
+}
+
 export function getRecommendation(score: number): string {
   if (score >= 88) return 'Strongly Recommend';
   if (score >= 75) return 'Recommend';
@@ -392,12 +518,12 @@ export function getRecommendation(score: number): string {
 }
 
 export function analyzeResume(text: string, filename: string, job: JobLike): ResumeAnalysis {
-  const cleaned = text.replace(/[  ]/g, ' ').trim();
+  const cleaned = text.replace(/[ ]/g, ' ').trim();
 
   const name = extractName(cleaned, filename);
   const email = extractEmail(cleaned);
   const phone = extractPhone(cleaned);
-  const { location, confidence: locationConfidence } = extractLocation(cleaned, name);
+  const { location, confidence: locationConfidence } = extractLocation(cleaned, name, email, phone);
   const experience = extractExperience(cleaned);
 
   const requiredSkills = job.requiredSkills || [];
@@ -406,12 +532,17 @@ export function analyzeResume(text: string, filename: string, job: JobLike): Res
   const matchedNice = matchSkills(cleaned, niceToHaveSkills);
   const skills = [...matchedRequired, ...matchedNice];
 
+  const lowerCleaned = dropDots(cleaned.toLowerCase());
+  const practicalSkills = skills.filter(skill => hasPracticalEvidence(lowerCleaned, skill));
+  const practicalSet = new Set(practicalSkills.map(s => s.toLowerCase()));
+  const achievements = extractAchievements(cleaned);
+
   let skillsMatch = 0;
-  const requiredScore = requiredSkills.length ? (matchedRequired.length / requiredSkills.length) * 100 : null;
-  const niceScore = niceToHaveSkills.length ? (matchedNice.length / niceToHaveSkills.length) * 100 : null;
+  const requiredScore = weightedSkillScore(requiredSkills, matchedRequired, practicalSet);
+  const niceScore = weightedSkillScore(niceToHaveSkills, matchedNice, practicalSet);
   if (requiredScore !== null && niceScore !== null) skillsMatch = Math.round(requiredScore * 0.7 + niceScore * 0.3);
-  else if (requiredScore !== null) skillsMatch = Math.round(requiredScore);
-  else if (niceScore !== null) skillsMatch = Math.round(niceScore);
+  else if (requiredScore !== null) skillsMatch = requiredScore;
+  else if (niceScore !== null) skillsMatch = niceScore;
 
   const educationMatch = scoreEducation(cleaned, job.education || '');
   const experienceMatch = scoreExperience(experience, job.level || '');
@@ -425,6 +556,8 @@ export function analyzeResume(text: string, filename: string, job: JobLike): Res
     locationConfidence,
     experience,
     skills,
+    practicalSkills,
+    achievements,
     skillsMatch,
     educationMatch,
     score,

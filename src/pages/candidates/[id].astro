@@ -2,20 +2,79 @@
 import AppLayout from "../../layouts/AppLayout.astro";
 import { connectDB } from "../../db/connection";
 import { Candidate } from "../../db/models/Candidate";
+import { Interview } from "../../db/models/Interview";
 import { Types } from "mongoose";
-import { sortedPipeline, getValidNextStages, findStage, getIconSvg } from "../../lib/pipeline";
+import { sortedPipeline, getValidNextStages, findStage, getIconSvg, isHiredStage } from "../../lib/pipeline";
+import { buildCandidateSummary } from "../../lib/candidateSummary";
 
 const { id } = Astro.params;
 if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/candidates');
 
 await connectDB();
-const raw = await Candidate.findById(id).populate('jobId', 'title department location requiredSkills education level pipeline').lean();
+const raw = await Candidate.findById(id).populate('jobId', 'title department location requiredSkills niceToHaveSkills education level pipeline').lean();
 if (!raw) return Astro.redirect('/candidates');
 
 const job = raw.jobId as any;
 const pipeline = sortedPipeline(job?.pipeline || []);
 const currentStage = findStage(pipeline, raw.currentStage);
 const validStages = getValidNextStages(pipeline, raw.currentStage);
+// Once hired or rejected the process is over — neither "schedule another
+// round" nor "reject" are sensible actions left to offer.
+const isHired = !raw.rejected && isHiredStage(pipeline, raw.currentStage);
+const canScheduleOrReject = !raw.rejected && !isHired;
+
+const interviewDocs = await Interview.find({ candidateId: id }).sort({ date: 1, time: 1 }).lean();
+
+// The most recent human-written stage-move remark — auto-advance notes are
+// system-generated filler, not a recruiter's actual read, so they're excluded.
+// This is what makes the assessment "dynamic per stage": real notes/feedback
+// recorded as the candidate moves get folded into the next read of them.
+const humanStageNotes = (raw.stageHistory || [])
+  .filter((h: any) => h.notes && h.notes.trim() && !/^auto-advanced/i.test(h.notes.trim()))
+  .sort((a: any, b: any) => new Date(b.movedAt).getTime() - new Date(a.movedAt).getTime());
+const latestStageNote = humanStageNotes.length ? {
+  stageLabel: humanStageNotes[0].stageLabel,
+  note: humanStageNotes[0].notes,
+  movedBy: humanStageNotes[0].movedBy,
+  movedAt: humanStageNotes[0].movedAt,
+} : null;
+
+const summary = buildCandidateSummary({
+  name: raw.name,
+  score: raw.score,
+  skillsMatch: raw.skillsMatch,
+  educationMatch: raw.educationMatch,
+  experience: raw.experience,
+  recommendation: raw.recommendation,
+  currentStage: raw.currentStage,
+  rejected: raw.rejected,
+  rejectedAt: raw.rejectedAt,
+  rejectedBy: raw.rejectedBy,
+  pipeline,
+  matchedSkills: raw.skills || [],
+  practicalSkills: raw.practicalSkills || [],
+  achievements: raw.achievements || [],
+  jobRequiredSkills: job?.requiredSkills || [],
+  jobNiceToHaveSkills: job?.niceToHaveSkills || [],
+  jobLevel: job?.level || '',
+  latestStageNote,
+  interviews: interviewDocs.map(iv => ({
+    round: iv.round,
+    date: iv.date,
+    status: iv.status,
+    commScore: iv.commScore,
+    techScore: iv.techScore,
+    confidenceScore: iv.confidenceScore,
+    recommendation: iv.recommendation,
+    analysis: iv.analysis ? {
+      decision: iv.analysis.decision,
+      strengths: iv.analysis.strengths,
+      concerns: iv.analysis.concerns,
+      reasoning: iv.analysis.reasoning,
+    } : null,
+  })),
+});
+const verdictBadgeClass = summary.verdict === 'advance' ? 'badge-success' : summary.verdict === 'rejected' ? 'badge-error' : summary.verdict === 'early' ? 'badge-info' : 'badge-warning';
 
 const candidate = {
   ...raw,
@@ -29,11 +88,19 @@ const candidate = {
   applied: new Date(raw.createdAt).toISOString().split('T')[0],
 };
 
-// Build skill scores from candidate skills vs job required skills
-const skillsToShow = candidate.jobSkills.length ? candidate.jobSkills.slice(0, 8) : (candidate.skills || []).slice(0, 8);
-const skillScores = skillsToShow.map((skill: string) => {
-  const match = (candidate.skills || []).some((s: string) => s.toLowerCase().includes(skill.toLowerCase()));
-  return match ? 92 : 20;
+// Three real, inspectable tiers — not a guess: a skill that's nowhere on the
+// resume scores 0 (not "20% just for being asked about"); one that's merely
+// named scores moderately; one with real evidence of hands-on use (built into
+// a project, "Tech Stack:", etc. — see practicalSkills) scores high. Every
+// number traces back to whether the resume's own text actually supports it.
+const skillsToShow = candidate.jobSkills.length ? candidate.jobSkills : (candidate.skills || []);
+const skillStatus = skillsToShow.map((skill: string) => {
+  const matched = (candidate.skills || []).some((s: string) => s.toLowerCase() === skill.toLowerCase());
+  if (!matched) return { score: 0, label: 'Not found on resume' };
+  const demonstrated = (candidate.practicalSkills || []).some((s: string) => s.toLowerCase() === skill.toLowerCase());
+  return demonstrated
+    ? { score: 95, label: 'Used in a project or role — not just listed' }
+    : { score: 55, label: 'Listed, but no project/work evidence found' };
 });
 ---
 
@@ -49,9 +116,6 @@ const skillScores = skillsToShow.map((skill: string) => {
           <h1 style="font-size:22px;font-weight:600;color:var(--fg);letter-spacing:-0.4px;margin:0;">{candidate.name}</h1>
           <div style="font-size:13px;color:var(--fg-mute);margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
             <span>{candidate.location}</span>
-            {candidate.locationConfidence && candidate.locationConfidence !== 'none' && (
-              <span class={`badge ${candidate.locationConfidence === 'high' ? 'badge-success' : candidate.locationConfidence === 'medium' ? 'badge-info' : 'badge-neutral'}`} style="font-size:10px;padding:1px 6px;">{candidate.locationConfidence} confidence</span>
-            )}
             <span>· Applied {candidate.applied}</span>
           </div>
         </div>
@@ -59,15 +123,22 @@ const skillScores = skillsToShow.map((skill: string) => {
     </div>
     <div style="display:flex;gap:8px;flex-shrink:0;">
       <a href={`/candidates/${candidate.id}/journey`} class="btn btn-secondary btn-sm">Journey</a>
-      <a href={`/interviews/schedule?candidate=${candidate.id}`} class="btn btn-primary btn-sm">Schedule Interview</a>
+      {canScheduleOrReject && <a href={`/interviews/schedule?candidate=${candidate.id}`} class="btn btn-primary btn-sm">Schedule Interview</a>}
     </div>
   </div>
 
-  <!-- Score banner -->
+  <!-- Score banner — the headline number/recommendation is the LIVE blended
+       read (resume + every analyzed interview round, recomputed on every
+       page load via buildCandidateSummary), not a frozen resume-upload-time
+       snapshot. Skills/Experience/Education stay as resume facts (they
+       describe the document itself and don't change), but the number badged
+       "AI Score" is the one that should move as the candidate progresses —
+       see the narrative sentence below for exactly how it's derived. -->
   <div class="card shadow-lvl-2" style="display:flex;gap:24px;align-items:center;flex-wrap:wrap;padding:20px 24px;margin-bottom:20px;">
     <div style="text-align:center;">
-      <div style="font-size:40px;font-weight:700;color:var(--fg);letter-spacing:-2px;font-family:'JetBrains Mono',monospace;line-height:1;">{candidate.score}</div>
+      <div style="font-size:40px;font-weight:700;color:var(--fg);letter-spacing:-2px;font-family:'JetBrains Mono',monospace;line-height:1;">{summary.overallScore}</div>
       <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;margin-top:4px;">AI Score</div>
+      {summary.roundsConsidered > 0 && <div style="font-size:10px;color:var(--fg-mute);margin-top:3px;">resume {candidate.score} + {summary.roundsConsidered} interview{summary.roundsConsidered === 1 ? '' : 's'}</div>}
     </div>
     <div style="width:1px;height:48px;background:var(--border);flex-shrink:0;"></div>
     <div class="grid-cols-3" style="flex:1;min-width:200px;gap:20px;">
@@ -89,8 +160,8 @@ const skillScores = skillsToShow.map((skill: string) => {
     </div>
     <div style="width:1px;height:48px;background:var(--border);flex-shrink:0;"></div>
     <div>
-      <span class={`badge ${candidate.recommendation === 'Strongly Recommend' ? 'badge-success' : candidate.recommendation === 'Recommend' ? 'badge-info' : 'badge-warning'}`} style="font-size:13px;padding:4px 12px;">
-        {candidate.recommendation}
+      <span class={`badge ${summary.overallLabel === 'Strongly Recommend' ? 'badge-success' : summary.overallLabel === 'Recommend' ? 'badge-info' : summary.overallLabel === 'Consider' ? 'badge-warning' : 'badge-error'}`} style="font-size:13px;padding:4px 12px;">
+        {summary.overallLabel}
       </span>
       <div style="font-size:11px;color:var(--fg-mute);margin-top:6px;text-align:center;">AI Recommendation</div>
     </div>
@@ -98,13 +169,63 @@ const skillScores = skillsToShow.map((skill: string) => {
 
   <div class="grid-main-aside" style="--aside-w:300px;">
     <div style="display:flex;flex-direction:column;gap:20px;">
-      <!-- AI Insights -->
+      <!-- Dynamic AI Assessment — recomputed from the resume read plus every
+           completed interview's analysis, so it shifts as the candidate
+           actually moves through the pipeline rather than freezing at upload. -->
       <div class="card shadow-lvl-2">
-        <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">AI Insights</h2>
+        <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          AI Assessment
+          <span class={`badge ${verdictBadgeClass}`} style="font-size:10px;text-transform:none;letter-spacing:0;font-family:inherit;">{summary.verdictLabel}</span>
+          {summary.roundsConsidered > 0 && <span style="font-size:11px;color:var(--fg-mute);font-weight:400;text-transform:none;letter-spacing:0;font-family:inherit;">· based on resume + {summary.roundsConsidered} completed interview{summary.roundsConsidered === 1 ? '' : 's'}</span>}
+        </h2>
         <div style="background:var(--bg-soft);border-radius:6px;padding:16px;border-left:3px solid var(--fg);margin-bottom:16px;">
-          <p style="font-size:14px;color:var(--fg-body);line-height:1.6;margin:0;">
-            {candidate.name} {candidate.score >= 88 ? 'shows strong alignment' : candidate.score >= 75 ? 'shows reasonable alignment' : candidate.score >= 65 ? 'shows partial alignment' : 'shows limited alignment'} with the {candidate.jobTitle || 'role'} requirements based on the resume on file. Their resume indicates {candidate.experience} year{candidate.experience === 1 ? '' : 's'} of experience{candidate.jobLevel ? ` against a target range of ${candidate.jobLevel}` : ''}. Skill match is {candidate.skillsMatch >= 80 ? 'strong' : candidate.skillsMatch >= 60 ? 'moderate' : 'weak'} at {candidate.skillsMatch}%{candidate.jobSkills.length ? `, with ${candidate.skills?.length || 0} of ${candidate.jobSkills.length} listed required/nice-to-have skills detected directly in the resume text` : ''}. Education background scores {candidate.educationMatch}% against the role's stated requirement ({candidate.jobEducation || 'no specific requirement'}).
-          </p>
+          <p style="font-size:14px;color:var(--fg-body);line-height:1.6;margin:0;max-height:220px;overflow-y:auto;padding-right:8px;">{summary.narrative}</p>
+        </div>
+
+        {summary.roundBreakdown.length > 0 && (
+          <div style="margin-bottom:16px;">
+            <h3 style="font-size:12px;font-weight:600;color:var(--fg-mute);margin:0 0 10px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Score progression by round</h3>
+            <div style="display:flex;flex-direction:column;gap:8px;max-height:260px;overflow-y:auto;padding-right:4px;">
+              {summary.roundBreakdown.map(r => (
+                <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:6px;background:var(--bg-soft);border:1px solid var(--border);">
+                  <div style="flex:1;min-width:0;">
+                    <div style="font-size:13px;font-weight:500;color:var(--fg);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                      {r.round}
+                      <span class={`badge ${r.decision === 'advance' ? 'badge-success' : 'badge-warning'}`} style="font-size:10px;">{r.decision === 'advance' ? 'Advance' : 'Hold'}</span>
+                    </div>
+                    <div style="font-size:11px;color:var(--fg-mute);margin-top:2px;font-family:'JetBrains Mono',monospace;">
+                      {r.date} · Comm {r.commScore} · Tech {r.techScore} · Conf {r.confidenceScore}
+                    </div>
+                  </div>
+                  <div style="text-align:right;flex-shrink:0;">
+                    <div style="font-size:18px;font-weight:700;color:var(--fg);font-family:'JetBrains Mono',monospace;line-height:1;">{r.overallScore}</div>
+                    <div style={`font-size:11px;margin-top:2px;font-family:'JetBrains Mono',monospace;color:${r.trend === 'up' ? '#10b981' : r.trend === 'down' ? '#ef4444' : 'var(--fg-mute)'};`}>
+                      {r.trend === 'first' ? 'baseline' : r.trend === 'flat' ? 'steady' : `${r.trend === 'up' ? '▲' : '▼'} ${Math.abs(r.trendDelta)}`}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div class="grid-cols-2" style="gap:16px;">
+          <div>
+            <h3 style="font-size:12px;font-weight:600;color:#10b981;margin:0 0 8px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Why move forward</h3>
+            {summary.forwardSignals.length ? (
+              <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;">
+                {summary.forwardSignals.map(s => <li style="font-size:13px;color:var(--fg-body);line-height:1.4;">{s}</li>)}
+              </ul>
+            ) : <p style="font-size:13px;color:var(--fg-mute);margin:0;">{summary.verdict === 'rejected' ? 'Not applicable — the process has ended.' : 'No concrete positive signal recorded yet.'}</p>}
+          </div>
+          <div>
+            <h3 style="font-size:12px;font-weight:600;color:#ef4444;margin:0 0 8px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Why hold or reject</h3>
+            {summary.concernSignals.length ? (
+              <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;">
+                {summary.concernSignals.map(s => <li style="font-size:13px;color:var(--fg-body);line-height:1.4;">{s}</li>)}
+              </ul>
+            ) : <p style="font-size:13px;color:var(--fg-mute);margin:0;">No concrete concerns recorded yet.</p>}
+          </div>
         </div>
       </div>
 
@@ -112,12 +233,15 @@ const skillScores = skillsToShow.map((skill: string) => {
       {skillsToShow.length > 0 && (
         <div class="card shadow-lvl-2">
           <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Skills Analysis</h2>
-          <div style="display:flex;flex-direction:column;gap:12px;">
+          <div style="display:flex;flex-direction:column;gap:14px;max-height:340px;overflow-y:auto;padding-right:8px;">
             {skillsToShow.map((skill: string, i: number) => (
-              <div style="display:flex;align-items:center;gap:12px;">
-                <div style="width:110px;font-size:13px;color:var(--fg-body);flex-shrink:0;">{skill}</div>
-                <div class="progress" style="flex:1;"><div class="progress-bar" style={`width:${skillScores[i]}%`}></div></div>
-                <div style="font-size:12px;color:var(--fg-mute);width:32px;text-align:right;font-family:'JetBrains Mono',monospace;">{skillScores[i]}%</div>
+              <div>
+                <div style="display:flex;align-items:center;gap:12px;">
+                  <div style="width:110px;font-size:13px;color:var(--fg-body);flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title={skill}>{skill}</div>
+                  <div class="progress" style="flex:1;"><div class="progress-bar" style={`width:${skillStatus[i].score}%;background:${skillStatus[i].score === 0 ? '#ef4444' : skillStatus[i].score >= 95 ? '#10b981' : 'var(--accent, #6366f1)'};`}></div></div>
+                  <div style="font-size:12px;color:var(--fg-mute);width:32px;text-align:right;font-family:'JetBrains Mono',monospace;">{skillStatus[i].score}%</div>
+                </div>
+                <div style="font-size:11px;color:var(--fg-mute);margin:3px 0 0 122px;">{skillStatus[i].label}</div>
               </div>
             ))}
           </div>
@@ -139,6 +263,11 @@ const skillScores = skillsToShow.map((skill: string) => {
               Download
             </a>
           </div>
+          <button id="reanalyze-btn" class="btn btn-ghost btn-sm" style="width:100%;margin-top:10px;">
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none" style="margin-right:5px;"><path d="M12.5 7A5.5 5.5 0 1 1 10.5 2.8M12.5 2.5v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Re-analyze resume with the latest analysis engine
+          </button>
+          <p style="font-size:11px;color:var(--fg-mute);margin:6px 0 0;line-height:1.4;">Re-runs location, experience, skills, and scoring straight from the file on record — useful if the parsed read above looks off.</p>
         </div>
       )}
     </div>
@@ -179,8 +308,8 @@ const skillScores = skillsToShow.map((skill: string) => {
         <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Actions</h3>
         <div style="display:flex;flex-direction:column;gap:8px;">
           <a href={`/candidates/${candidate.id}/journey`} class="btn btn-primary" style="width:100%;border-radius:6px;">View Journey</a>
-          <a href={`/interviews/schedule?candidate=${candidate.id}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">Schedule Interview</a>
-          {!candidate.rejected && <button id="reject-btn" class="btn btn-ghost" style="width:100%;color:#ef4444;">Reject Candidate</button>}
+          {canScheduleOrReject && <a href={`/interviews/schedule?candidate=${candidate.id}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">Schedule Interview</a>}
+          {canScheduleOrReject && <button id="reject-btn" class="btn btn-ghost" style="width:100%;color:#ef4444;">Reject Candidate</button>}
           <button id="delete-btn" class="btn btn-ghost" style="width:100%;color:#ee0000;">Delete Candidate</button>
         </div>
       </div>
@@ -266,5 +395,28 @@ const skillScores = skillsToShow.map((skill: string) => {
     const res = await fetch(`/api/candidates/${candidateId}`, { method: 'DELETE' });
     if (res.ok) window.location.href = '/candidates';
     else window.hvToast('Failed to delete.', 'error');
+  });
+
+  document.getElementById('reanalyze-btn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    const original = btn.innerHTML;
+    btn.textContent = 'Re-analyzing…';
+    try {
+      const res = await fetch(`/api/candidates/${candidateId}/reanalyze`, { method: 'POST' });
+      if (res.ok) {
+        window.hvToast('Resume re-analyzed with the latest engine.', 'success');
+        window.location.reload();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        window.hvToast(err.error || 'Failed to re-analyze resume.', 'error');
+        btn.disabled = false;
+        btn.innerHTML = original;
+      }
+    } catch {
+      window.hvToast('Failed to re-analyze resume.', 'error');
+      btn.disabled = false;
+      btn.innerHTML = original;
+    }
   });
 </script>
