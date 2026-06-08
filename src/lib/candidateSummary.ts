@@ -5,10 +5,10 @@
 // real strength/concern that was actually recorded — nothing fabricated, and
 // the read changes as new rounds complete rather than freezing at the resume.
 
-import { findStage, type PipelineStage } from './pipeline';
+import { findStage, isHiredStage, type PipelineStage } from './pipeline';
 import { getRecommendation } from './resumeAnalysis';
 
-export type CandidateVerdict = 'advance' | 'hold' | 'rejected' | 'early';
+export type CandidateVerdict = 'advance' | 'hold' | 'rejected' | 'early' | 'hired';
 
 export interface CandidateSummaryInterview {
   round: string;
@@ -305,6 +305,40 @@ export function buildCandidateSummary(input: CandidateSummaryInput): CandidateSu
       narrative: sentences.join(' '),
       forwardSignals: [],
       concernSignals,
+      overallScore,
+      overallLabel,
+      roundsConsidered: completed.length,
+      roundBreakdown,
+    };
+  }
+
+  // --- Hired: the other terminal outcome — the process succeeded and is over.
+  // Without this branch the generic "interviews on the books" narrative below
+  // would keep telling the reader to "schedule the next round" or "move them
+  // to the next stage" for someone who has already been hired into the role —
+  // a stale, self-contradicting read that falls out of sync the moment the
+  // stage actually changes. This keeps the page's story matching the journey. ---
+  if (isHiredStage(input.pipeline, input.currentStage)) {
+    const hireNote = input.latestStageNote && input.latestStageNote.stageLabel === stageLabel
+      ? ` ${firstSentences(input.latestStageNote.note, 1)}`
+      : '';
+    const sentences = [
+      `${input.name} was hired for this role — their process reached "${stageLabel}", the final stage in this job's pipeline.${hireNote}`,
+    ];
+    if (latest) {
+      sentences.push(
+        `Their last completed round ("${latest.round}" on ${latest.date}) ${latest.analysis!.decision === 'advance' ? 'had leaned toward advancing them, consistent with the call to bring them on' : 'had actually leaned toward holding, though the final hiring call overrode that read'}: ${firstSentences(latest.analysis!.reasoning, 1)}`
+      );
+    }
+    if (stageNoteSentence && !hireNote) sentences.push(stageNoteSentence + '.');
+    sentences.push(`This is a terminal outcome — ${input.name} cannot move to any further stage, and nothing below should be read as an open question still being decided.`);
+    return {
+      verdict: 'hired',
+      verdictLabel: 'Hired — process complete',
+      headline: `${input.name} was hired — their process is complete and no further action is needed here.`,
+      narrative: sentences.join(' '),
+      forwardSignals,
+      concernSignals: [],
       overallScore,
       overallLabel,
       roundsConsidered: completed.length,

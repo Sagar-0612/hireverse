@@ -74,7 +74,7 @@ const summary = buildCandidateSummary({
     } : null,
   })),
 });
-const verdictBadgeClass = summary.verdict === 'advance' ? 'badge-success' : summary.verdict === 'rejected' ? 'badge-error' : summary.verdict === 'early' ? 'badge-info' : 'badge-warning';
+const verdictBadgeClass = (summary.verdict === 'advance' || summary.verdict === 'hired') ? 'badge-success' : summary.verdict === 'rejected' ? 'badge-error' : summary.verdict === 'early' ? 'badge-info' : 'badge-warning';
 
 const candidate = {
   ...raw,
@@ -220,7 +220,9 @@ const skillStatus = skillsToShow.map((skill: string) => {
           </div>
           <div>
             <h3 style="font-size:12px;font-weight:600;color:#ef4444;margin:0 0 8px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Why hold or reject</h3>
-            {summary.concernSignals.length ? (
+            {summary.verdict === 'hired' ? (
+              <p style="font-size:13px;color:var(--fg-mute);margin:0;">Not applicable — {candidate.name} was hired; there's no open question left to weigh against.</p>
+            ) : summary.concernSignals.length ? (
               <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;">
                 {summary.concernSignals.map(s => <li style="font-size:13px;color:var(--fg-body);line-height:1.4;">{s}</li>)}
               </ul>

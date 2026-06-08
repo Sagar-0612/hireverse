@@ -113,9 +113,15 @@ const needsAnalysis = isCompleted && !interview.analysis;
       <div class="grid-main-aside" style="--aside-w:320px;">
         <div style="display:flex;flex-direction:column;gap:20px;">
           <div class="card shadow-lvl-2">
-            <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;display:flex;align-items:center;gap:8px;">
+            <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
               AI Interview Analysis
               {interview.analysis && <span class={`badge ${interview.analysis.decision === 'advance' ? 'badge-success' : 'badge-error'}`} style="font-size:10px;text-transform:none;letter-spacing:0;font-family:inherit;">{interview.analysis.decision === 'advance' ? 'Recommends advancing' : 'Recommends holding'}</span>}
+              {interview.analysis && (
+                <button id="reanalyze-interview-btn" class="btn btn-ghost btn-sm" style="margin-left:auto;font-size:11px;text-transform:none;letter-spacing:0;font-family:inherit;font-weight:400;padding:4px 10px;height:auto;">
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" style="margin-right:4px;"><path d="M12.5 7A5.5 5.5 0 1 1 10.5 2.8M12.5 2.5v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  Re-analyze with latest engine
+                </button>
+              )}
             </h2>
             {interview.analysis ? (
               <>
@@ -341,5 +347,28 @@ const needsAnalysis = isCompleted && !interview.analysis;
     });
     if (res.ok) window.location.reload();
     else window.hvToast('Failed.', 'error');
+  });
+
+  document.getElementById('reanalyze-interview-btn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    const original = btn.innerHTML;
+    btn.textContent = 'Re-analyzing…';
+    try {
+      const res = await fetch(`/api/interviews/${interviewId}/reanalyze`, { method: 'POST' });
+      if (res.ok) {
+        window.hvToast('Interview re-analyzed with the latest engine.', 'success');
+        window.location.reload();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        window.hvToast(err.error || 'Failed to re-analyze this interview.', 'error');
+        btn.disabled = false;
+        btn.innerHTML = original;
+      }
+    } catch {
+      window.hvToast('Failed to re-analyze this interview.', 'error');
+      btn.disabled = false;
+      btn.innerHTML = original;
+    }
   });
 </script>

@@ -46,7 +46,20 @@ function countMatches(text: string, re: RegExp): number {
 // Each dimension is scored from the net balance of matched phrases — the same
 // "count what's actually there" approach resumeAnalysis uses for skills.
 const TECHNICAL_SIGNALS: SignalPattern[] = [
-  POS(/\b(?:strong|solid|deep|excellent|impressive|thorough|good|great|sharp|clear)\b[^.?!]{0,40}\b(?:technical|coding|problem[- ]solving|system design|algorithm(?:ic)?|engineering|domain)\b[^.?!]{0,40}\b(?:knowledge|understanding|skills?|grasp|depth|fundamentals?|ability)\b/i, 'demonstrated strong technical depth', 2.5),
+  POS(/\b(?:strong|solid|deep|excellent|impressive|thorough|exceptional|outstanding|expert|good|great|sharp|clear)\b[^.?!]{0,40}\b(?:technical|coding|problem[- ]solving|system design|architecture|architectural|algorithm(?:ic)?|engineering|domain|frontend|backend|full[- ]?stack)\b[^.?!]{0,40}\b(?:knowledge|understanding|skills?|grasp|depth|mastery|expertise|fundamentals?|ability|thinking|judgment)\b/i, 'demonstrated strong technical depth', 2.5),
+  // Glowing feedback often praises depth without the literal word "technical" —
+  // "demonstrated mastery of the React ecosystem", "solid architectural
+  // thinking", "practical industry experience". These are at least as common
+  // in real write-ups as the more rigid "strong technical knowledge" phrasing
+  // the pattern above requires, and skipping them is exactly the kind of
+  // asymmetric blind spot that makes a glowing review read as "nothing to see".
+  POS(/\b(?:demonstrated|showed|displayed|brings?|has)\b[^.?!]{0,15}\b(?:mastery|expertise|command|fluency)\b[^.?!]{0,40}\bof\b/i, 'demonstrated real mastery of the subject matter', 2.5),
+  POS(/\b(?:strong|solid|deep|excellent|sharp|great|good|impressive)\b[^.?!]{0,15}\b(?:architectural|design|engineering|product)\b[^.?!]{0,15}\b(?:thinking|sense|judgment|instincts?|practices?|intuition)\b/i, 'showed strong architectural / engineering judgment', 2),
+  POS(/\bpractical\s+(?:industry|hands[- ]on|real[- ]world|work(?:place)?)\s+experience\b/i, 'brings real, practical industry experience', 1.5),
+  POS(/\b(?:reasonable|decent|solid|good|working|practical)\s+understanding\s+of\b/i, 'showed a workable, practical understanding of the subject', 1.2),
+  POS(/\bknowledge\s+(?:is|seems|appears|looks|was)\s+(?:practical|solid|good|reasonable|decent|strong)\b/i, 'interviewer described their knowledge as practical and grounded, not just theoretical', 1),
+  POS(/\b(?:justified|defended|reasoned about|walked (?:us|me|through) through)\b[^.?!]{0,30}\b(?:decisions?|choices?|trade[- ]?offs?|approach(?:es)?|design)\b/i, 'justified technical decisions with real trade-off reasoning rather than guesswork', 2),
+  POS(/\b(?:provided|gave|offered|shared)\b[^.?!]{0,20}\b(?:real[- ]world|concrete|specific|practical)\b[^.?!]{0,15}\bexamples?\b/i, 'backed up answers with concrete, real-world examples rather than theory', 1.5),
   POS(/\b(?:solved|nailed|aced|cracked|worked through|reasoned through|walked (?:us|me) through)\b[^.?!]{0,50}\b(?:problem|question|exercise|challenge|design|case|bug|algorithm)\b/i, 'worked through the technical problem effectively', 2),
   POS(/\b(?:wrote|produced|delivered)\b[^.?!]{0,30}\b(?:clean|efficient|well[- ]structured|readable|correct|working)\b[^.?!]{0,20}\bcode\b/i, 'produced clean, working code', 2),
   POS(/\b(?:correctly|accurately)\b[^.?!]{0,30}\b(?:identified|diagnosed|explained|described|implemented|optimi[sz]ed)\b/i, 'reasoned correctly under examination', 1.5),
@@ -68,6 +81,11 @@ const TECHNICAL_SIGNALS: SignalPattern[] = [
 
 const COMMUNICATION_SIGNALS: SignalPattern[] = [
   POS(/\b(?:communicated|explained|articulated|presented)\b[^.?!]{0,30}\b(?:clearly|concisely|well|effectively|confidently)\b/i, 'communicated clearly and effectively', 2.5),
+  // Praise for communication is at least as often phrased as a noun phrase —
+  // "excellent communication skills" — as the verb form above. Missing this
+  // is exactly how a write-up that explicitly calls out communication as a
+  // strength ends up reading as "nothing notable on communication".
+  POS(/\b(?:excellent|exceptional|outstanding|strong|great|impressive|clear|good|solid)\b[^.?!]{0,15}\bcommunication\b[^.?!]{0,15}\bskills?\b/i, 'interviewer specifically praised their communication skills', 2.5),
   POS(/\b(?:articulate|well[- ]spoken|clear communicator|easy to follow|structured (?:answers|response|thinking))\b/i, 'came across as an articulate, structured communicator', 2),
   POS(/\b(?:asked|raised)\b[^.?!]{0,20}\b(?:good|thoughtful|clarifying|insightful)\b[^.?!]{0,20}\bquestions?\b/i, 'asked thoughtful clarifying questions', 1.5),
   POS(/\b(?:active listener|listened (?:carefully|well|attentively))\b/i, 'listened carefully and engaged with the conversation', 1),
@@ -100,6 +118,18 @@ const VERDICT_SIGNALS: SignalPattern[] = [
   // enough here the way it's safe to be elsewhere.
   POS(/(?<!\b(?:not|never)\s)(?<!n't\s)\b(?:strongly recommend|hire(?:d)? (?:them|him|her)|move (?:them|him|her)?\s*forward|advance (?:them|him|her)?\s*to|great fit|excellent fit|top candidate|would love to have (?:them|him|her))\b/i, 'interviewer explicitly advocated moving forward', 4),
   POS(/(?<!\b(?:not|never)\s)(?<!n't\s)\b(?:recommend (?:moving|advancing|proceeding)|next round|good fit|solid fit|worth (?:advancing|progressing))\b/i, 'interviewer leaned toward advancing the candidate', 2.5),
+  // The interviewer's opening characterization of the *person* — "exceptional
+  // candidate", "outstanding candidate" — is one of the strongest, most direct
+  // bottom-line statements a write-up can contain, and is common phrasing for
+  // genuinely standout interviews. Treating it as "no signal" (as the original
+  // lexicon did) is precisely the kind of asymmetric miss that under-scores a
+  // candidate the interviewer was, in their own words, enthusiastic about.
+  POS(/\b(?:exceptional|outstanding|impressive|standout|stellar|excellent)\s+candidate\b/i, 'interviewer opened by characterizing them as an exceptional / standout candidate', 3.5),
+  // "Capable of contributing independently / from day one" is an interviewer's
+  // direct judgment that this person can do the job — the practical bottom
+  // line a hiring decision actually rests on, especially for non-senior roles.
+  POS(/\bcapable of\s+(?:contributing|operating|working|delivering|performing)\b[^.?!]{0,40}\b(?:independently|on (?:their|his|her) own|with minimal (?:guidance|supervision|hand[- ]?holding)|from day one)\b/i, 'interviewer judged them ready to contribute independently', 2.5),
+  POS(/\b(?:ready|well[- ]?suited|well[- ]?equipped)\s+to\s+(?:contribute|take on|handle|step into)\b/i, 'interviewer judged them ready to take on the role', 2),
   NEG(/\b(?:do not recommend|wouldn'?t recommend|would not recommend|not a fit|not a good fit|pass on (?:this|the) candidate|would not (?:hire|move (?:them|him|her) forward)|do not (?:hire|advance|move (?:them|him|her) forward))\b/i, 'interviewer explicitly recommended against advancing', 4.5),
   NEG(/\b(?:red flag|major concern|serious concern|dealbreaker|deal[- ]breaker|would not trust|integrity concern|inconsistent (?:story|answers|account))\b/i, 'interviewer raised a serious red flag', 5),
   NEG(/\b(?:not (?:ready|there) yet|borderline|on the fence|mixed feelings|some reservations|hesitant to recommend)\b/i, 'interviewer expressed real reservations', 1.5),
@@ -158,8 +188,9 @@ function buildReasoning(opts: {
   redFlag: boolean;
   jobTitle: string;
   jobLevel: string;
+  feedbackWordCount: number;
 }): string {
-  const { candidateName, round, hasTranscript, techScore, commScore, confidenceScore, overallScore, recommendation, decision, strengths, concerns, redFlag, jobTitle, jobLevel } = opts;
+  const { candidateName, round, hasTranscript, techScore, commScore, confidenceScore, overallScore, recommendation, decision, strengths, concerns, redFlag, jobTitle, jobLevel, feedbackWordCount } = opts;
   const sourceNote = hasTranscript ? "the interviewer's written feedback and the interview transcript" : "the interviewer's written feedback";
 
   const tier = (n: number) => n >= 80 ? 'strong' : n >= 65 ? 'solid' : n >= 50 ? 'mixed' : 'weak';
@@ -194,14 +225,31 @@ function buildReasoning(opts: {
 
   if (decision === 'advance') {
     sentences.push(`Net verdict: ${recommendation.toLowerCase()} — the signal is strong enough to justify moving ${candidateName} forward to the next stage.`);
-  } else if (strengths.length) {
+  } else if (strengths.length && concerns.length) {
+    // Only say "concerns outweigh strengths" when concerns actually exist —
+    // claiming a tension that isn't there is exactly the kind of untraceable,
+    // self-contradicting narrative a candidate could rightly call out as unfair.
     sentences.push(`Net verdict: ${recommendation.toLowerCase()} — the concerns outweigh the strengths closely enough that this should not advance without a second opinion.`);
+  } else if (strengths.length) {
+    sentences.push(`Net verdict: ${recommendation.toLowerCase()} — there are real positives here and nothing concrete weighing against them, but on the numbers they don't yet clear the bar this round needs on their own; a stronger showing on the other dimensions would tip this toward advancing.`);
   } else {
     sentences.push(`Net verdict: ${recommendation.toLowerCase()} — there's no counterbalancing strength here strong enough to justify moving ${candidateName} forward on this showing.`);
   }
 
+  // No fixed lexicon can cover every way a real interviewer phrases praise or
+  // concern — people write in their own words, and a phrase the system has
+  // never seen produces a real (and silent) blind spot. Rather than pretend
+  // the score is complete whenever that happens, this surfaces the gap between
+  // how much the interviewer actually wrote and how much of it the system could
+  // confidently place — so a thin read on substantial feedback reads as "go
+  // check the source," not as "this person had nothing to say."
+  const totalHits = strengths.length + concerns.length;
   if (!strengths.length && !concerns.length) {
-    sentences.push(`Note: the feedback didn't contain much specific, scoreable detail — consider asking the interviewer for more concrete observations before relying heavily on this verdict.`);
+    sentences.push(feedbackWordCount >= 40
+      ? `Confidence note: this feedback runs to roughly ${feedbackWordCount} words, but the system's pattern library didn't confidently recognize any scoreable strength or concern in it — the interviewer may have written in phrasing its current lexicon doesn't yet cover, which would make the ${overallScore}/100 above closer to a neutral default than a real read of what they wrote. Read the interviewer's original feedback directly (just below) before relying on this score — and consider re-running the analysis after the lexicon is broadened to cover that phrasing.`
+      : `Note: the feedback didn't contain much specific, scoreable detail — consider asking the interviewer for more concrete observations before relying heavily on this verdict.`);
+  } else if (feedbackWordCount >= 70 && totalHits === 1) {
+    sentences.push(`Confidence note: this feedback runs to roughly ${feedbackWordCount} words, but the system's pattern library confidently recognized only one concrete signal in it — there's a real chance other praise or concerns are phrased in the interviewer's own words in a way the current lexicon doesn't catch yet. Treat the read above as a starting point, not the final word — it's worth reading the original feedback directly before deciding.`);
   }
 
   return sentences.join(' ');
@@ -226,6 +274,8 @@ export function analyzeInterview(input: AnalyzeInterviewInput): InterviewAnalysi
   const combined = [feedback, transcript].filter(Boolean).join('\n');
   const jobTitle = (input.jobTitle || '').trim();
   const jobLevel = (input.jobLevel || '').trim();
+
+  const feedbackWordCount = feedback ? feedback.split(/\s+/).filter(Boolean).length : 0;
 
   const tech = scanText(combined, TECHNICAL_SIGNALS);
   const comm = scanText(combined, COMMUNICATION_SIGNALS);
@@ -298,6 +348,7 @@ export function analyzeInterview(input: AnalyzeInterviewInput): InterviewAnalysi
     strengths,
     concerns,
     redFlag,
+    feedbackWordCount,
   });
 
   const transcriptSummary = transcript ? summarizeTranscript(transcript, allHits) : '';
