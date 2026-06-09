@@ -6,7 +6,7 @@
 // the read changes as new rounds complete rather than freezing at the resume.
 
 import { findStage, isHiredStage, type PipelineStage } from './pipeline';
-import { getRecommendation } from './resumeAnalysis';
+import { getRecommendation, formatExperience } from './resumeAnalysis';
 
 export type CandidateVerdict = 'advance' | 'hold' | 'rejected' | 'early' | 'hired';
 
@@ -197,7 +197,7 @@ function jdFitSentences(input: CandidateSummaryInput, jd: JdAlignment): string[]
     }
   }
   const levelNote = input.jobLevel ? ` — the role's stated band is ${input.jobLevel}` : '';
-  out.push(`Resume reads as ${input.experience} year${input.experience === 1 ? '' : 's'} of actual employment history${levelNote}.`);
+  out.push(`Resume reads as ${formatExperience(input.experience)} of actual employment history${levelNote}.`);
   if (input.achievements.length) {
     out.push(`Beyond the core ask, the resume also surfaces: ${input.achievements.slice(0, 3).join('; ')}.`);
   }
@@ -209,7 +209,7 @@ function resumeForwardSignals(input: CandidateSummaryInput, jd: JdAlignment): st
   if (jd.practical.length >= 2) out.push(`Demonstrated hands-on use — not just naming — of ${listOf(jd.practical)}, evidenced directly in the resume's project/work text`);
   if (input.skillsMatch >= 75) out.push(`Resume shows strong skill alignment with the role (${input.skillsMatch}% match, weighted by demonstrated use)`);
   if (input.educationMatch >= 75) out.push(`Education background matches what the role asks for (${input.educationMatch}% match)`);
-  if (input.experience >= 3) out.push(`Brings ${input.experience} year${input.experience === 1 ? '' : 's'} of actual employment history`);
+  if (input.experience >= 3) out.push(`Brings ${formatExperience(input.experience)} of actual employment history`);
   if (input.score >= 85) out.push(`Resume score of ${input.score}/100 places them well above the bar for this role`);
   if (input.achievements.length) out.push(`Stands out beyond the baseline ask: ${input.achievements.slice(0, 2).join('; ')}`);
   return out;

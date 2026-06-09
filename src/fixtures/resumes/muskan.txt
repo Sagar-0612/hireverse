@@ -1,0 +1,43 @@
+Muskan
+New Delhi, India | muskan@gmail.com | +91-9812345678
+
+PROFILE
+Frontend Developer with 2 years of hands-on experience building responsive, accessible
+web applications using React and modern JavaScript. Strong fundamentals in HTML, CSS,
+and component-based architecture. Looking to grow in a collaborative engineering team.
+
+WORK EXPERIENCE
+
+Frontend Developer
+TechStart Solutions Pvt Ltd, Delhi                           Jul 2023 – Present
+• Built and maintained 4 production React applications serving 5,000+ users monthly
+• Developed 30+ reusable UI components in React with hooks and functional patterns
+• Implemented responsive layouts using HTML5 and CSS3 (Flexbox, CSS Grid)
+• Integrated REST APIs using fetch and Axios; collaborated with Node.js backend team
+• Used Git and GitHub for version control, pull requests, and code reviews
+• Improved page load performance by 25% through lazy loading and code splitting
+
+Junior Developer Trainee
+CodeCraft Labs, Delhi                                        Jan 2023 – Jun 2023
+• Developed frontend UI features using React and JavaScript
+• Built form validations and dynamic rendering with React state management
+• Contributed to team project using Git branching workflow
+• Participated in daily standups and sprint reviews
+
+EDUCATION
+
+B.Tech – Computer Science and Engineering
+Delhi Technological University                               2019 – 2023
+CGPA: 8.1/10
+
+SKILLS
+React, JavaScript, HTML, CSS, Git, REST APIs, Node.js (basics), JSON, Bootstrap,
+Responsive Design, Figma (basics), Axios, React Router, CSS Modules
+
+PROJECTS
+• E-Commerce Dashboard – Full frontend in React with shopping cart, filters, and
+  dynamic product listing; built REST API integration with mock backend
+• Portfolio Builder – Dynamic portfolio generator using React and JavaScript;
+  deployed on Netlify with CI/CD
+• Task Manager App – Task management app with React, local state management,
+  drag-and-drop functionality; used HTML5 drag API and CSS transitions

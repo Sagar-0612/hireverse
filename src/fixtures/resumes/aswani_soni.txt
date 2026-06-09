@@ -1,0 +1,43 @@
+Aswani Soni
+aswani.soni@gmail.com | +91-9988776655
+
+PROFILE
+Full Stack Developer with 4 years of experience designing and shipping scalable web
+applications using Node.js, React, and MongoDB. Deep expertise in REST API architecture,
+TypeScript, and cloud deployment. Passionate about clean code and system performance.
+
+PROFESSIONAL EXPERIENCE
+
+Full Stack Developer
+Innovatech Systems Pvt Ltd, Bangalore                       Apr 2021 – Present
+• Architected and built 6 full-stack applications using Node.js, React, and MongoDB
+  serving a combined 15,000+ daily active users
+• Designed and implemented RESTful APIs using Node.js and Express with JWT auth
+• Engineered MongoDB schemas, indexes, and aggregation pipelines for complex queries
+• Migrated legacy JavaScript codebase to TypeScript across frontend and backend
+• Deployed and managed applications on AWS EC2 using Docker containers
+• Implemented real-time features using WebSockets (Socket.io) and Redis pub/sub
+• Built a GraphQL API layer for a client dashboard — reduced API calls by 60%
+
+Junior Full Stack Developer
+Webcraft India, Bangalore                                    Jun 2020 – Mar 2021
+• Built REST APIs using Node.js and Express for a B2B SaaS product
+• Developed frontend components using React; integrated with backend via REST APIs
+• Worked with MongoDB for data persistence; wrote migrations and seed scripts
+• Collaborated in Agile sprints using JIRA; Git workflows with feature branches
+
+EDUCATION
+
+B.E. – Computer Science and Engineering
+R.V. College of Engineering, Bangalore (VTU)                 2016 – 2020
+CGPA: 8.4/10
+
+SKILLS
+Node.js, React, MongoDB, REST APIs, JavaScript, TypeScript, Python, Express.js,
+Docker, AWS, GraphQL, Redis, Git, HTML, CSS, Socket.io, Mongoose, Agile/Scrum,
+JWT, CI/CD, Linux, Postman, Jest (unit testing)
+
+ACHIEVEMENTS
+AWS Certified Developer – Associate (2023)
+Built and deployed 6 production applications serving 15k+ daily users
+Speaker at BangaloreTech Meetup 2023 – "Scaling Node.js APIs with Redis Caching"

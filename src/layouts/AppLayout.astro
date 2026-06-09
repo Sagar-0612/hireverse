@@ -207,7 +207,12 @@ const navItems = [
       info: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 7.5v3.5M8 5v.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
     };
     const toastStack = document.getElementById("hv-toast-stack");
-    const TOAST_DURATION = 3000;
+    // Duration scales with reading time: ~200 wpm ≈ 300 ms/word.
+    // Floor 4 s so short messages don't flash; ceiling 12 s for long notices.
+    function toastDuration(msg) {
+      const words = msg.trim().split(/\s+/).length;
+      return Math.max(4000, Math.min(12000, words * 300));
+    }
     window.hvToast = function(message, type) {
       type = (type === "success" || type === "error") ? type : "info";
       const el = document.createElement("div");
@@ -216,7 +221,7 @@ const navItems = [
       el.querySelector(".hv-toast-msg").textContent = message;
       const bar = el.querySelector(".hv-toast-progress");
       let dismissed = false;
-      let remaining = TOAST_DURATION;
+      let remaining = toastDuration(message);
       let startedAt = 0;
       let timer = null;
       const pauseable = () => {

@@ -6,6 +6,7 @@ import { Interview } from "../../db/models/Interview";
 import { Job } from "../../db/models/Job";
 import { findStage } from "../../lib/pipeline";
 import { blendOverallScore } from "../../lib/candidateSummary";
+import { formatExperience } from "../../lib/resumeAnalysis";
 
 await connectDB();
 const rawCandidates = await Candidate.find()
@@ -87,6 +88,13 @@ const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } 
       <option value="">All Stages</option>
       {stageOptions.map(s => <option value={s}>{s}</option>)}
     </select>
+    <select id="rec-filter" class="select" style="width:190px;">
+      <option value="">All Recommendations</option>
+      <option value="Strongly Recommend">Strongly Recommend</option>
+      <option value="Recommend">Recommend</option>
+      <option value="Consider">Consider</option>
+      <option value="Not Recommended">Not Recommended</option>
+    </select>
     <select id="sort-select" class="select" style="width:170px;">
       <option value="score-desc">Sort: Highest Score</option>
       <option value="score-asc">Sort: Lowest Score</option>
@@ -97,16 +105,16 @@ const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } 
   </div>
 
   <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
-    <div class="table-container">
+    <div class="table-container" style="max-height:600px;overflow-y:auto;">
       <table id="cand-table">
-        <thead>
+        <thead style="position:sticky;top:0;z-index:1;background:var(--surface-card,var(--surface,#fff));">
           <tr>
             <th>Rank</th><th>Candidate</th><th>Job</th><th>Score</th><th>Experience</th><th>Skills Match</th><th>Education</th><th>Status</th><th>Recommendation</th><th></th>
           </tr>
         </thead>
         <tbody>
           {candidates.map(c => (
-            <tr data-name={c.name.toLowerCase()} data-job={c.jobId} data-stage={c.stageLabel} data-score={c.score} data-exp={c.experience}>
+            <tr data-name={c.name.toLowerCase()} data-job={c.jobId} data-stage={c.stageLabel} data-score={c.score} data-exp={c.experience} data-rec={c.recommendation}>
               <td><span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--fg-mute);" class="rank-cell">#{c.rank}</span></td>
               <td>
                 <div style="display:flex;align-items:center;gap:10px;">
@@ -124,7 +132,7 @@ const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } 
                   title={c.roundsConsidered > 0 ? `Resume ${c.resumeScore} blended with ${c.roundsConsidered} analyzed interview${c.roundsConsidered === 1 ? '' : 's'} → ${c.score}` : `Resume score (no analyzed interviews yet)`}
                 >{c.score}</div>
               </td>
-              <td style="font-family:'JetBrains Mono',monospace;font-size:12px;">{c.experience} yrs</td>
+              <td style="font-family:'JetBrains Mono',monospace;font-size:12px;">{formatExperience(c.experience)}</td>
               <td>
                 <div style="display:flex;align-items:center;gap:6px;">
                   <div class="progress" style="width:56px;"><div class="progress-bar" style={`width:${c.skillsMatch}%`}></div></div>
@@ -192,6 +200,7 @@ const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } 
   const searchInput = document.getElementById('cand-search');
   const jobFilter = document.getElementById('job-filter');
   const stageFilter = document.getElementById('stage-filter');
+  const recFilter = document.getElementById('rec-filter');
   const sortSelect = document.getElementById('sort-select');
   const countEl = document.getElementById('cand-count');
   const tbody = document.querySelector('#cand-table tbody');
@@ -201,12 +210,14 @@ const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } 
     const q = searchInput.value.toLowerCase();
     const job = jobFilter.value;
     const stage = stageFilter.value;
+    const rec = recFilter.value;
     const sort = sortSelect.value;
 
     let visible = rows.filter(row =>
       (!q || (row.dataset.name || '').includes(q)) &&
       (!job || row.dataset.job === job) &&
-      (!stage || row.dataset.stage === stage)
+      (!stage || row.dataset.stage === stage) &&
+      (!rec || row.dataset.rec === rec)
     );
 
     visible.sort((a, b) => {
@@ -230,6 +241,7 @@ const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } 
   searchInput?.addEventListener('input', filterRows);
   jobFilter?.addEventListener('change', filterRows);
   stageFilter?.addEventListener('change', filterRows);
+  recFilter?.addEventListener('change', filterRows);
   sortSelect?.addEventListener('change', filterRows);
 
   // Upload modal

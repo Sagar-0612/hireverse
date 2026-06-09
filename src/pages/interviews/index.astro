@@ -39,6 +39,9 @@ const today = new Date().toISOString().split('T')[0];
 const scheduled = interviews.filter(iv => iv.status === 'scheduled');
 const completed = interviews.filter(iv => iv.status === 'completed');
 const upcoming = interviews.filter(iv => iv.date >= today && iv.status === 'scheduled');
+
+const uniqueJobs = [...new Set(interviews.map(iv => iv.jobTitle).filter(Boolean))].sort();
+const uniqueInterviewers = [...new Set(interviews.map(iv => iv.interviewer).filter(Boolean))].sort();
 ---
 
 <AppLayout title="Interviews" activeNav="interviews">
@@ -53,23 +56,35 @@ const upcoming = interviews.filter(iv => iv.date >= today && iv.status === 'sche
     </a>
   </div>
 
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px;">
-    <div class="stat-card shadow-lvl-1" style="padding:16px;">
-      <div class="stat-label">Total</div>
-      <div class="stat-value" style="font-size:22px;">{interviews.length}</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px;">
+    <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Total</div><div class="stat-value" style="font-size:22px;">{interviews.length}</div></div>
+    <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Scheduled</div><div class="stat-value" style="font-size:22px;color:#3b82f6;">{scheduled.length}</div></div>
+    <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Completed</div><div class="stat-value" style="font-size:22px;color:#10b981;">{completed.length}</div></div>
+    <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Upcoming</div><div class="stat-value" style="font-size:22px;">{upcoming.length}</div></div>
+  </div>
+
+  <!-- Filters — applied across all tabs via client-side JS -->
+  <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+    <div class="search-wrap" style="flex:1;min-width:180px;max-width:280px;">
+      <span class="search-icon"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"><circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.5"/><path d="M9 9l2.5 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+      <input id="iv-search" type="text" class="input search-input" placeholder="Search candidate…" />
     </div>
-    <div class="stat-card shadow-lvl-1" style="padding:16px;">
-      <div class="stat-label">Scheduled</div>
-      <div class="stat-value" style="font-size:22px;color:#3b82f6;">{scheduled.length}</div>
-    </div>
-    <div class="stat-card shadow-lvl-1" style="padding:16px;">
-      <div class="stat-label">Completed</div>
-      <div class="stat-value" style="font-size:22px;color:#10b981;">{completed.length}</div>
-    </div>
-    <div class="stat-card shadow-lvl-1" style="padding:16px;">
-      <div class="stat-label">Upcoming</div>
-      <div class="stat-value" style="font-size:22px;">{upcoming.length}</div>
-    </div>
+    <select id="iv-job-filter" class="select" style="width:210px;">
+      <option value="">All Jobs</option>
+      {uniqueJobs.map(t => <option value={t}>{t}</option>)}
+    </select>
+    <select id="iv-interviewer-filter" class="select" style="width:180px;">
+      <option value="">All Interviewers</option>
+      {uniqueInterviewers.map(i => <option value={i}>{i}</option>)}
+    </select>
+    <select id="iv-status-filter" class="select" style="width:160px;">
+      <option value="">All Statuses</option>
+      <option value="scheduled">Scheduled</option>
+      <option value="completed">Completed</option>
+      <option value="cancelled">Cancelled</option>
+      <option value="rescheduled">Rescheduled</option>
+    </select>
+    <span id="iv-count" style="font-size:13px;color:var(--fg-mute);margin-left:auto;">{interviews.length} results</span>
   </div>
 
   <div class="tabs">
@@ -78,6 +93,7 @@ const upcoming = interviews.filter(iv => iv.date >= today && iv.status === 'sche
     <a href="#all" class="tab" data-tab="all">All ({interviews.length})</a>
   </div>
 
+  <!-- Upcoming -->
   <div id="tab-upcoming" class="tab-pane">
     {scheduled.length === 0 ? (
       <div class="empty-state card shadow-lvl-2">
@@ -85,9 +101,14 @@ const upcoming = interviews.filter(iv => iv.date >= today && iv.status === 'sche
         <a href="/interviews/schedule" class="btn btn-primary btn-sm" style="margin-top:12px;">Schedule One</a>
       </div>
     ) : (
-      <div style="display:flex;flex-direction:column;gap:12px;">
+      <div id="upcoming-list" style="display:flex;flex-direction:column;gap:12px;">
         {scheduled.map(iv => (
-          <div class="card shadow-lvl-2" style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;padding:16px 20px;">
+          <div class="card shadow-lvl-2 iv-upcoming-card"
+            data-name={iv.candidateName.toLowerCase()}
+            data-job={iv.jobTitle}
+            data-interviewer={iv.interviewer}
+            data-status={iv.status}
+            style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;padding:16px 20px;">
             <div style="width:44px;height:44px;border-radius:8px;background:var(--bg-soft);display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0;border:1px solid var(--border);">
               <div style="font-size:16px;font-weight:700;color:var(--fg);line-height:1;font-family:'JetBrains Mono',monospace;">{iv.date.split('-')[2]}</div>
               <div style="font-size:10px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;">{new Date(iv.date + 'T12:00:00').toLocaleString('en-US',{month:'short'})}</div>
@@ -106,10 +127,14 @@ const upcoming = interviews.filter(iv => iv.date >= today && iv.status === 'sche
             </div>
           </div>
         ))}
+        <div id="upcoming-empty" style="display:none;" class="empty-state card shadow-lvl-2">
+          <div style="font-size:14px;color:var(--fg-mute);">No interviews match the current filters.</div>
+        </div>
       </div>
     )}
   </div>
 
+  <!-- Completed -->
   <div id="tab-completed" class="tab-pane" style="display:none;">
     {completed.length === 0 ? (
       <div class="empty-state card shadow-lvl-2"><div style="font-size:15px;font-weight:500;color:var(--fg);">No completed interviews</div></div>
@@ -122,9 +147,13 @@ const upcoming = interviews.filter(iv => iv.date >= today && iv.status === 'sche
                 <th>Candidate</th><th>Job</th><th>Round</th><th>Interviewer</th><th>Date</th><th>Comm</th><th>Technical</th><th>Confidence</th><th>Recommendation</th><th></th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="completed-tbody">
               {completed.map(iv => (
-                <tr>
+                <tr class="iv-completed-row"
+                  data-name={iv.candidateName.toLowerCase()}
+                  data-job={iv.jobTitle}
+                  data-interviewer={iv.interviewer}
+                  data-status={iv.status}>
                   <td style="font-weight:500;color:var(--fg);">{iv.candidateName}</td>
                   <td style="color:var(--fg-body);font-size:13px;">{iv.jobTitle}</td>
                   <td style="color:var(--fg-mute);">{iv.round}</td>
@@ -133,7 +162,7 @@ const upcoming = interviews.filter(iv => iv.date >= today && iv.status === 'sche
                   <td><span class="badge badge-info">{iv.commScore}</span></td>
                   <td><span class="badge badge-success">{iv.techScore}</span></td>
                   <td><span class="badge badge-violet">{iv.confidenceScore}</span></td>
-                  <td style="font-size:12px;color:var(--fg-body);">{iv.recommendation}</td>
+                  <td style="font-size:12px;color:var(--fg-body);max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{iv.recommendation}</td>
                   <td><a href={`/interviews/${iv.id}`} class="btn btn-ghost btn-sm">Analysis →</a></td>
                 </tr>
               ))}
@@ -144,6 +173,7 @@ const upcoming = interviews.filter(iv => iv.date >= today && iv.status === 'sche
     )}
   </div>
 
+  <!-- All -->
   <div id="tab-all" class="tab-pane" style="display:none;">
     <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
       <div class="table-container">
@@ -153,9 +183,13 @@ const upcoming = interviews.filter(iv => iv.date >= today && iv.status === 'sche
               <th>Candidate</th><th>Job</th><th>Round</th><th>Interviewer</th><th>Date &amp; Time</th><th>Format</th><th>Status</th><th></th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="all-tbody">
             {interviews.map(iv => (
-              <tr>
+              <tr class="iv-all-row"
+                data-name={iv.candidateName.toLowerCase()}
+                data-job={iv.jobTitle}
+                data-interviewer={iv.interviewer}
+                data-status={iv.status}>
                 <td style="font-weight:500;color:var(--fg);">{iv.candidateName}</td>
                 <td style="font-size:13px;color:var(--fg-body);">{iv.jobTitle}</td>
                 <td style="color:var(--fg-mute);">
@@ -182,6 +216,7 @@ const upcoming = interviews.filter(iv => iv.date >= today && iv.status === 'sche
 </AppLayout>
 
 <script>
+  // Tab switching
   document.querySelectorAll<HTMLAnchorElement>('.tab[data-tab]').forEach(tab => {
     tab.addEventListener('click', (e) => {
       e.preventDefault();
@@ -191,6 +226,90 @@ const upcoming = interviews.filter(iv => iv.date >= today && iv.status === 'sche
       document.querySelectorAll<HTMLDivElement>('.tab-pane').forEach(p => {
         p.style.display = p.id === `tab-${target}` ? '' : 'none';
       });
+      updateCount();
     });
   });
+
+  // Filter controls
+  const ivSearch = document.getElementById('iv-search') as HTMLInputElement;
+  const ivJobFilter = document.getElementById('iv-job-filter') as HTMLSelectElement;
+  const ivInterviewerFilter = document.getElementById('iv-interviewer-filter') as HTMLSelectElement;
+  const ivStatusFilter = document.getElementById('iv-status-filter') as HTMLSelectElement;
+  const ivCount = document.getElementById('iv-count');
+
+  function getFilters() {
+    return {
+      q: ivSearch?.value.toLowerCase() || '',
+      job: ivJobFilter?.value || '',
+      interviewer: ivInterviewerFilter?.value || '',
+      status: ivStatusFilter?.value || '',
+    };
+  }
+
+  function matchesFilters(el: Element, f: ReturnType<typeof getFilters>): boolean {
+    const d = (el as HTMLElement).dataset;
+    return (
+      (!f.q || (d.name || '').includes(f.q)) &&
+      (!f.job || d.job === f.job) &&
+      (!f.interviewer || d.interviewer === f.interviewer) &&
+      (!f.status || d.status === f.status)
+    );
+  }
+
+  function updateCount() {
+    const activeTab = document.querySelector('.tab.active')?.getAttribute('data-tab') || 'upcoming';
+    const f = getFilters();
+    let visible = 0;
+
+    if (activeTab === 'upcoming') {
+      document.querySelectorAll('.iv-upcoming-card').forEach(el => {
+        const show = matchesFilters(el, f);
+        (el as HTMLElement).style.display = show ? '' : 'none';
+        if (show) visible++;
+      });
+      const emptyEl = document.getElementById('upcoming-empty');
+      if (emptyEl) emptyEl.style.display = visible === 0 ? '' : 'none';
+    } else if (activeTab === 'completed') {
+      document.querySelectorAll('.iv-completed-row').forEach(el => {
+        const show = matchesFilters(el, f);
+        (el as HTMLElement).style.display = show ? '' : 'none';
+        if (show) visible++;
+      });
+    } else {
+      document.querySelectorAll('.iv-all-row').forEach(el => {
+        const show = matchesFilters(el, f);
+        (el as HTMLElement).style.display = show ? '' : 'none';
+        if (show) visible++;
+      });
+    }
+
+    if (ivCount) ivCount.textContent = `${visible} results`;
+  }
+
+  function applyFilters() {
+    // Apply across ALL tabs so switching tabs after filtering shows correct results
+    const f = getFilters();
+    let upcomingVisible = 0;
+    document.querySelectorAll('.iv-upcoming-card').forEach(el => {
+      const show = matchesFilters(el, f);
+      (el as HTMLElement).style.display = show ? '' : 'none';
+      if (show) upcomingVisible++;
+    });
+    const emptyEl = document.getElementById('upcoming-empty');
+    if (emptyEl) emptyEl.style.display = upcomingVisible === 0 ? '' : 'none';
+
+    document.querySelectorAll('.iv-completed-row').forEach(el => {
+      (el as HTMLElement).style.display = matchesFilters(el, f) ? '' : 'none';
+    });
+    document.querySelectorAll('.iv-all-row').forEach(el => {
+      (el as HTMLElement).style.display = matchesFilters(el, f) ? '' : 'none';
+    });
+
+    updateCount();
+  }
+
+  ivSearch?.addEventListener('input', applyFilters);
+  ivJobFilter?.addEventListener('change', applyFilters);
+  ivInterviewerFilter?.addEventListener('change', applyFilters);
+  ivStatusFilter?.addEventListener('change', applyFilters);
 </script>

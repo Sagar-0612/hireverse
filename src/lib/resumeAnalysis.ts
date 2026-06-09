@@ -118,19 +118,44 @@ function extractName(text: string, filename: string): string {
   }
 
   const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(0, 15);
-  for (const line of lines) {
+  // Single-word names (e.g. "Muskan") are valid — capture one from the first 4
+  // header lines as a fallback before the filename, but keep searching for a
+  // two-word form in case the full name appears slightly further down.
+  let singleWordCandidate = '';
+
+  for (let idx = 0; idx < lines.length; idx++) {
+    const line = lines[idx];
     if (NAME_NOISE.test(line) || SECTION_HEADER_RE.test(line)) continue;
     if (/\d/.test(line)) continue;
     if (line.length > 40) continue;
     const words = line.split(/\s+/).filter(Boolean);
+
+    if (words.length === 1 && idx < 4) {
+      const w = words[0];
+      // Require at least 3 chars, all-alpha, starts uppercase — rules out
+      // lone punctuation lines, short abbreviations, and ALL-CAPS section headers
+      // (those are already caught by SECTION_HEADER_RE above, but defense-in-depth).
+      if (w.length >= 3 && /^[A-Z][a-zA-Z'-]+$/.test(w) && !singleWordCandidate) {
+        singleWordCandidate = w[0].toUpperCase() + w.slice(1).toLowerCase();
+      }
+      continue;
+    }
+
     if (words.length < 2 || words.length > 4) continue;
     const looksLikeName = words.every(w => /^[A-Z][a-zA-Z'.-]*$/.test(w) || /^[A-Z]{2,}$/.test(w));
     if (looksLikeName) {
+      // If a single-word name was already captured from the first 4 lines (e.g.
+      // "Muskan"), trust it over a later job-title-like string ("Frontend Developer"
+      // in WORK EXPERIENCE) which would otherwise win because it looks name-like.
+      if (singleWordCandidate) return singleWordCandidate;
       return words
         .map(w => w[0].toUpperCase() + w.slice(1).toLowerCase())
         .join(' ');
     }
   }
+  // A confirmed single-word header name is more reliable than deriving a
+  // potentially wrong surname from the filename.
+  if (singleWordCandidate) return singleWordCandidate;
   return extractNameFromFilename(filename);
 }
 
@@ -224,6 +249,19 @@ function extractLocation(text: string, candidateName: string, email: string, pho
   }
   const nearContact = findLocationNearContact(allLines, anchors, isUsable, clean);
   if (nearContact) return nearContact;
+
+  // Resumes frequently pack the entire contact block on one line with | or •:
+  // "Mumbai, India | user@email.com | +91-9876543210"
+  // The isNoisy guard (triggered by @) and the clean() stripper (strips at first |)
+  // both miss the location segment — scan each token individually instead.
+  for (const raw of allLines.slice(0, 15)) {
+    if (!/[|•~]/.test(raw)) continue;
+    for (const seg of raw.split(/[|•~]/).map(s => s.trim()).filter(Boolean)) {
+      if (seg.length >= 60 || isNoisy(seg) || isCandidateName(seg) || SECTION_HEADER_RE.test(seg)) continue;
+      if (LOCATION_STRICT.test(seg)) return { location: seg, confidence: 'high' };
+      if (LOCATION_LOOSE.test(seg)) return { location: seg, confidence: 'medium' };
+    }
+  }
 
   for (const line of lines) {
     if (isNoisy(line) || line.length >= 60 || isCandidateName(line)) continue;
@@ -336,7 +374,7 @@ function extractExperience(text: string): number {
       }
     }
     totalMonths += curEnd - curStart;
-    return Math.min(Math.round(totalMonths / 12), 45);
+    return Math.min(totalMonths / 12, 45);
   }
 
   const explicit = text.match(/(\d{1,2})\+?\s*(?:years?|yrs?)\s*(?:of\s*)?(?:professional\s+|relevant\s+|total\s+|work(?:ing)?\s+)?experience/i);
@@ -345,6 +383,18 @@ function extractExperience(text: string): number {
     if (years > 0 && years <= 50) return years;
   }
   return 0;
+}
+
+// Formats a fractional year count into a human-readable string like "3 yrs 2 mo"
+// so display surfaces show actual precision rather than rounding to a whole year.
+export function formatExperience(years: number): string {
+  const totalMonths = Math.round(years * 12);
+  const y = Math.floor(totalMonths / 12);
+  const m = totalMonths % 12;
+  if (y === 0 && m === 0) return '< 1 mo';
+  if (y === 0) return m === 1 ? '1 mo' : `${m} mo`;
+  if (m === 0) return y === 1 ? '1 yr' : `${y} yrs`;
+  return `${y} yr${y !== 1 ? 's' : ''} ${m} mo`;
 }
 
 // Tech skill names are often written interchangeably with/without periods
@@ -483,13 +533,26 @@ function parseLevelRange(level: string): { min: number; max: number } | null {
   return { min: parseInt(m[1], 10), max: m[2] ? parseInt(m[2], 10) : Infinity };
 }
 
+// When the job level doesn't include an explicit year range like "(5-8 yrs)",
+// infer a reasonable band from seniority keywords so experience scoring stays
+// meaningful instead of falling back to an uncalibrated linear formula.
+function inferLevelYears(level: string): { min: number; max: number } | null {
+  if (!level) return null;
+  if (/junior|entry[\s-]?level?|jr\.?\b|fresher/i.test(level)) return { min: 0, max: 2 };
+  if (/\bmid[\s-]?(level)?\b|\bintermediate\b/i.test(level)) return { min: 2, max: 5 };
+  if (/\bsenior\b|\bsr\.?\b/i.test(level)) return { min: 5, max: 10 };
+  if (/\blead\b|\bprincipal\b|\bstaff\b/i.test(level)) return { min: 7, max: 15 };
+  if (/\bmanager\b|\bdirector\b|\bvp\b/i.test(level)) return { min: 8, max: 20 };
+  return null;
+}
+
 function scoreExperience(years: number, level: string): number {
-  const range = parseLevelRange(level);
+  const range = parseLevelRange(level) ?? inferLevelYears(level);
   if (!range) return Math.min(95, 40 + years * 8);
   if (years >= range.min && years <= range.max + 2) return 95;
   if (years > range.max + 2) return 88;
   const gap = range.min - years;
-  return Math.max(25, 95 - gap * 18);
+  return Math.max(20, 95 - gap * 18);
 }
 
 // A skill that's actually been put to work counts for more than one that's
@@ -546,7 +609,15 @@ export function analyzeResume(text: string, filename: string, job: JobLike): Res
 
   const educationMatch = scoreEducation(cleaned, job.education || '');
   const experienceMatch = scoreExperience(experience, job.level || '');
-  const score = Math.round(skillsMatch * 0.4 + educationMatch * 0.2 + experienceMatch * 0.4);
+  let score = Math.round(skillsMatch * 0.4 + educationMatch * 0.2 + experienceMatch * 0.4);
+
+  // Domain-mismatch hard floor: when a role defines 3+ required skills but the
+  // candidate matches fewer than 20% of them, education and experience alone
+  // cannot compensate — a non-tech candidate for a tech role should never
+  // score above "Not Recommended" just because their years on paper look right.
+  if (requiredSkills.length >= 3 && skillsMatch < 20) {
+    score = Math.min(score, 48);
+  }
 
   return {
     name,

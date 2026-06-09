@@ -6,6 +6,7 @@ import { Interview } from "../../db/models/Interview";
 import { Types } from "mongoose";
 import { sortedPipeline, getValidNextStages, findStage, getIconSvg, isHiredStage } from "../../lib/pipeline";
 import { buildCandidateSummary } from "../../lib/candidateSummary";
+import { formatExperience } from "../../lib/resumeAnalysis";
 
 const { id } = Astro.params;
 if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/candidates');
@@ -149,7 +150,7 @@ const skillStatus = skillsToShow.map((skill: string) => {
       </div>
       <div>
         <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Experience</div>
-        <div style="font-size:20px;font-weight:600;color:var(--fg);">{candidate.experience} yrs</div>
+        <div style="font-size:20px;font-weight:600;color:var(--fg);">{formatExperience(candidate.experience)}</div>
         <div class="progress" style="margin-top:6px;"><div class="progress-bar" style={`width:${Math.min(candidate.experience / 10 * 100, 100)}%`}></div></div>
       </div>
       <div>

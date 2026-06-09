@@ -9,7 +9,8 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "astro": "astro"
+    "astro": "astro",
+    "seed": "node --experimental-strip-types src/scripts/seed-sample-data.ts"
   },
   "dependencies": {
     "@astrojs/node": "^10.1.3",

@@ -40,7 +40,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     const created: any[] = [];
     const updated: any[] = [];
-    const notices: { type: 'duplicate' | 'reapplied'; message: string }[] = [];
+    const notices: { type: 'duplicate' | 'reapplied' | 'already_progressed'; message: string }[] = [];
 
     for (const file of files) {
       if (!file.name) continue;
@@ -64,6 +64,30 @@ export const POST: APIRoute = async ({ request }) => {
       const match = emailKey ? byEmail.get(emailKey) : byResumeName.get(file.name);
 
       if (match) {
+        // Guard: candidate has already moved through the pipeline (or been
+        // rejected).  Hiring decisions were made on the original score — we
+        // must not silently mutate it.  We still archive the new resume file
+        // (the recruiter may legitimately want the latest version on record)
+        // but every scored field and the stage history are left untouched.
+        const hasProgressed = match.rejected || match.currentStage !== firstStage.key;
+        if (hasProgressed) {
+          const stageLabel = match.rejected
+            ? 'Rejected'
+            : ((job.pipeline as any[]).find((s: any) => s.key === match.currentStage)?.label ?? match.currentStage);
+          const doc = await Candidate.findById(match._id);
+          if (doc) {
+            doc.resumeName = file.name;
+            doc.resumeType = mimeType;
+            doc.resumeBase64 = base64;
+            await doc.save();
+          }
+          notices.push({
+            type: 'already_progressed',
+            message: `${match.name} is already at "${stageLabel}" in the pipeline — scores and stage history are frozen. Resume file was archived, but no re-scoring was done.`,
+          });
+          continue;
+        }
+
         // Same person, same job — but is this actually a *new* application, or
         // the same one again? Only a real change on either side (the JD now
         // asks for something different, or their profile genuinely reads

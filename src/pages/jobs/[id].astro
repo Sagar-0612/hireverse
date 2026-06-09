@@ -6,6 +6,7 @@ import { Candidate } from "../../db/models/Candidate";
 import { Interview } from "../../db/models/Interview";
 import { Types } from "mongoose";
 import { sortedPipeline, bucketForCandidate, getValidNextStages, getIconSvg } from "../../lib/pipeline";
+import { formatExperience } from "../../lib/resumeAnalysis";
 
 const { id } = Astro.params;
 if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/jobs');
@@ -53,7 +54,7 @@ const inProgressCount = jobCandidates.filter(c => c.bucket === 'In Progress').le
 const hiredCount = jobCandidates.filter(c => c.bucket === 'Hired').length;
 
 const avgScore = jobCandidates.length ? Math.round(jobCandidates.reduce((s, c) => s + c.score, 0) / jobCandidates.length) : 0;
-const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.experience, 0) / jobCandidates.length).toFixed(1) : '0';
+const avgExpYears = jobCandidates.length ? jobCandidates.reduce((s, c) => s + c.experience, 0) / jobCandidates.length : 0;
 ---
 
 <AppLayout title={job.title} activeNav="jobs">
@@ -154,9 +155,25 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
 
   <!-- Candidates -->
   <div id="tab-candidates" class="tab-pane" style="display:none;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-      <span style="font-size:13px;color:var(--fg-mute);">{jobCandidates.length} candidate{jobCandidates.length !== 1 ? 's' : ''}</span>
-      <button class="btn btn-primary btn-sm" id="upload-btn-tab">Upload Resumes</button>
+    <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+      <div class="search-wrap" style="flex:1;min-width:160px;max-width:260px;">
+        <span class="search-icon"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"><circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.5"/><path d="M9 9l2.5 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+        <input id="jd-cand-search" type="text" class="input search-input" placeholder="Search candidates…" />
+      </div>
+      <select id="jd-cand-stage-filter" class="select" style="width:160px;">
+        <option value="">All Stages</option>
+        {pipeline.map(s => <option value={s.key}>{s.label}</option>)}
+        <option value="__rejected__">Rejected</option>
+      </select>
+      <select id="jd-cand-rec-filter" class="select" style="width:185px;">
+        <option value="">All Recommendations</option>
+        <option value="Strongly Recommend">Strongly Recommend</option>
+        <option value="Recommend">Recommend</option>
+        <option value="Consider">Consider</option>
+        <option value="Not Recommended">Not Recommended</option>
+      </select>
+      <span id="jd-cand-count" style="font-size:13px;color:var(--fg-mute);">{jobCandidates.length} candidates</span>
+      <button class="btn btn-primary btn-sm" id="upload-btn-tab" style="margin-left:auto;">Upload Resumes</button>
     </div>
     {jobCandidates.length === 0 ? (
       <div class="empty-state card shadow-lvl-2">
@@ -167,12 +184,15 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
       </div>
     ) : (
       <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
-        <div class="table-container">
+        <div class="table-container" style="max-height:540px;overflow-y:auto;">
           <table>
-            <thead><tr><th>Rank</th><th>Candidate</th><th>Score</th><th>Experience</th><th>Skills Match</th><th>Education</th><th>Stage</th><th>Recommendation</th><th></th></tr></thead>
+            <thead style="position:sticky;top:0;z-index:1;background:var(--surface-card,var(--surface,#fff));"><tr><th>Rank</th><th>Candidate</th><th>Score</th><th>Experience</th><th>Skills Match</th><th>Education</th><th>Stage</th><th>Recommendation</th><th></th></tr></thead>
             <tbody>
               {jobCandidates.map(c => (
-                <tr>
+                <tr class="jd-cand-row"
+                  data-name={c.name.toLowerCase()}
+                  data-stage={c.rejected ? '__rejected__' : c.currentStage}
+                  data-rec={c.recommendation}>
                   <td><span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--fg-mute);">#{c.rank}</span></td>
                   <td>
                     <div style="display:flex;align-items:center;gap:10px;">
@@ -184,7 +204,7 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
                     </div>
                   </td>
                   <td><div class={`score-ring ${c.score >= 85 ? 'score-high' : c.score >= 70 ? 'score-mid' : 'score-low'}`}>{c.score}</div></td>
-                  <td style="font-family:'JetBrains Mono',monospace;font-size:12px;">{c.experience} yrs</td>
+                  <td style="font-family:'JetBrains Mono',monospace;font-size:12px;">{formatExperience(c.experience)}</td>
                   <td>
                     <div style="display:flex;align-items:center;gap:6px;">
                       <div class="progress" style="width:56px;"><div class="progress-bar" style={`width:${c.skillsMatch}%`}></div></div>
@@ -219,8 +239,26 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
 
   <!-- Interviews -->
   <div id="tab-interviews" class="tab-pane" style="display:none;">
-    <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
-      <a href={`/interviews/schedule?job=${job.id}`} class="btn btn-primary btn-sm">Schedule Interview</a>
+    <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+      <div class="search-wrap" style="flex:1;min-width:160px;max-width:260px;">
+        <span class="search-icon"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"><circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.5"/><path d="M9 9l2.5 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+        <input id="jd-iv-search" type="text" class="input search-input" placeholder="Search by candidate…" />
+      </div>
+      <select id="jd-iv-status-filter" class="select" style="width:155px;">
+        <option value="">All Statuses</option>
+        <option value="scheduled">Scheduled</option>
+        <option value="completed">Completed</option>
+        <option value="cancelled">Cancelled</option>
+        <option value="rescheduled">Rescheduled</option>
+      </select>
+      <select id="jd-iv-round-filter" class="select" style="width:175px;">
+        <option value="">All Rounds</option>
+        {[...new Set(jobInterviews.map(iv => iv.round))].filter(Boolean).sort().map(r => (
+          <option value={r}>{r}</option>
+        ))}
+      </select>
+      <span id="jd-iv-count" style="font-size:13px;color:var(--fg-mute);">{jobInterviews.length} interviews</span>
+      <a href={`/interviews/schedule?job=${job.id}`} class="btn btn-primary btn-sm" style="margin-left:auto;">Schedule Interview</a>
     </div>
     {jobInterviews.length === 0 ? (
       <div class="empty-state card shadow-lvl-2">
@@ -228,12 +266,15 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
       </div>
     ) : (
       <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
-        <div class="table-container">
+        <div class="table-container" style="max-height:540px;overflow-y:auto;">
           <table>
-            <thead><tr><th>Candidate</th><th>Round</th><th>Interviewer</th><th>Date</th><th>Status</th><th></th></tr></thead>
+            <thead style="position:sticky;top:0;z-index:1;background:var(--surface-card,var(--surface,#fff));"><tr><th>Candidate</th><th>Round</th><th>Interviewer</th><th>Date</th><th>Status</th><th></th></tr></thead>
             <tbody>
               {jobInterviews.map(iv => (
-                <tr>
+                <tr class="jd-iv-row"
+                  data-name={iv.candidateName.toLowerCase()}
+                  data-status={iv.status}
+                  data-round={iv.round}>
                   <td style="font-weight:500;color:var(--fg);">{iv.candidateName}</td>
                   <td style="color:var(--fg-body);">{iv.round}</td>
                   <td style="color:var(--fg-mute);">{iv.interviewer}</td>
@@ -253,7 +294,7 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
   <div id="tab-analytics" class="tab-pane" style="display:none;">
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;">
       <div class="card shadow-lvl-2"><div class="stat-label">Avg Score</div><div class="stat-value" style="font-size:22px;">{avgScore || '—'}</div></div>
-      <div class="card shadow-lvl-2"><div class="stat-label">Avg Experience</div><div class="stat-value" style="font-size:22px;">{avgExp} <span style="font-size:14px;font-weight:400;">yrs</span></div></div>
+      <div class="card shadow-lvl-2"><div class="stat-label">Avg Experience</div><div class="stat-value" style="font-size:22px;">{jobCandidates.length ? formatExperience(avgExpYears) : '—'}</div></div>
       <div class="card shadow-lvl-2"><div class="stat-label">Hire Rate</div><div class="stat-value" style="font-size:22px;">{jobCandidates.length ? Math.round(hiredCount / jobCandidates.length * 100) : 0}%</div></div>
       <div class="card shadow-lvl-2"><div class="stat-label">Rejection Rate</div><div class="stat-value" style="font-size:22px;">{jobCandidates.length ? Math.round(rejectedCount / jobCandidates.length * 100) : 0}%</div></div>
     </div>
@@ -363,6 +404,62 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
   }
   window.rejectCandidate = rejectCandidate;
 
+  // ── Candidates tab filters ──────────────────────────────────────────────────
+  const jdCandSearch = document.getElementById('jd-cand-search');
+  const jdCandStageFilter = document.getElementById('jd-cand-stage-filter');
+  const jdCandRecFilter = document.getElementById('jd-cand-rec-filter');
+  const jdCandCount = document.getElementById('jd-cand-count');
+
+  function filterCandidates() {
+    const rows = document.querySelectorAll('.jd-cand-row');
+    const q = jdCandSearch?.value.toLowerCase() || '';
+    const stage = jdCandStageFilter?.value || '';
+    const rec = jdCandRecFilter?.value || '';
+    let visible = 0;
+    rows.forEach(row => {
+      const d = row.dataset;
+      const show =
+        (!q || (d.name || '').includes(q)) &&
+        (!stage || d.stage === stage) &&
+        (!rec || d.rec === rec);
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    if (jdCandCount) jdCandCount.textContent = `${visible} candidates`;
+  }
+
+  jdCandSearch?.addEventListener('input', filterCandidates);
+  jdCandStageFilter?.addEventListener('change', filterCandidates);
+  jdCandRecFilter?.addEventListener('change', filterCandidates);
+
+  // ── Interviews tab filters ──────────────────────────────────────────────────
+  const jdIvSearch = document.getElementById('jd-iv-search');
+  const jdIvStatusFilter = document.getElementById('jd-iv-status-filter');
+  const jdIvRoundFilter = document.getElementById('jd-iv-round-filter');
+  const jdIvCount = document.getElementById('jd-iv-count');
+
+  function filterJobInterviews() {
+    const rows = document.querySelectorAll('.jd-iv-row');
+    const q = jdIvSearch?.value.toLowerCase() || '';
+    const status = jdIvStatusFilter?.value || '';
+    const round = jdIvRoundFilter?.value || '';
+    let visible = 0;
+    rows.forEach(row => {
+      const d = row.dataset;
+      const show =
+        (!q || (d.name || '').includes(q)) &&
+        (!status || d.status === status) &&
+        (!round || d.round === round);
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    if (jdIvCount) jdIvCount.textContent = `${visible} interviews`;
+  }
+
+  jdIvSearch?.addEventListener('input', filterJobInterviews);
+  jdIvStatusFilter?.addEventListener('change', filterJobInterviews);
+  jdIvRoundFilter?.addEventListener('change', filterJobInterviews);
+
   // Upload modal
   const modal = document.getElementById('upload-modal');
   const fileInput = document.getElementById('file-input');
@@ -448,7 +545,10 @@ const avgExp = jobCandidates.length ? (jobCandidates.reduce((s, c) => s + c.expe
         if (data.uploaded || data.updated) {
           window.hvToast(parts.join(' · '), 'success');
         }
-        (data.notices || []).forEach((n) => window.hvToast(n.message, n.type === 'duplicate' ? 'info' : 'success'));
+        (data.notices || []).forEach((n) => {
+          const toastType = n.type === 'duplicate' || n.type === 'already_progressed' ? 'info' : 'success';
+          window.hvToast(n.message, toastType);
+        });
         setTimeout(() => window.location.reload(), 1500);
       } else {
         const err = await res.json();
