@@ -207,23 +207,52 @@ const navItems = [
       info: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 7.5v3.5M8 5v.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
     };
     const toastStack = document.getElementById("hv-toast-stack");
+    const TOAST_DURATION = 3000;
     window.hvToast = function(message, type) {
       type = (type === "success" || type === "error") ? type : "info";
       const el = document.createElement("div");
       el.className = `hv-toast hv-toast-${type}`;
-      el.innerHTML = `<span class="hv-toast-icon">${TOAST_ICONS[type]}</span><span class="hv-toast-msg"></span><button class="hv-toast-close" aria-label="Dismiss"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>`;
+      el.innerHTML = `<span class="hv-toast-icon">${TOAST_ICONS[type]}</span><span class="hv-toast-msg"></span><button class="hv-toast-close" aria-label="Dismiss"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button><span class="hv-toast-progress-track"><span class="hv-toast-progress"></span></span>`;
       el.querySelector(".hv-toast-msg").textContent = message;
+      const bar = el.querySelector(".hv-toast-progress");
       let dismissed = false;
-      const close = () => {
+      let remaining = TOAST_DURATION;
+      let startedAt = 0;
+      let timer = null;
+      const pauseable = () => {
+        clearTimeout(timer);
+        timer = setTimeout(close, remaining);
+        startedAt = Date.now();
+        if (bar) {
+          bar.style.transitionDuration = remaining + "ms";
+          requestAnimationFrame(() => { bar.style.width = "0%"; });
+        }
+      };
+      const pause = () => {
+        clearTimeout(timer);
+        remaining -= Date.now() - startedAt;
+        if (bar) {
+          const computed = getComputedStyle(bar).width;
+          bar.style.transitionDuration = "0ms";
+          bar.style.width = computed;
+        }
+      };
+      function close() {
         if (dismissed) return;
         dismissed = true;
+        clearTimeout(timer);
         el.classList.remove("show");
         setTimeout(() => el.remove(), 220);
-      };
+      }
       el.querySelector(".hv-toast-close")?.addEventListener("click", close);
+      el.addEventListener("mouseenter", pause);
+      el.addEventListener("mouseleave", pauseable);
       toastStack?.appendChild(el);
-      requestAnimationFrame(() => el.classList.add("show"));
-      setTimeout(close, 5000);
+      requestAnimationFrame(() => {
+        el.classList.add("show");
+        if (bar) bar.style.width = "100%";
+        requestAnimationFrame(pauseable);
+      });
     };
 
     // ── Confirm / prompt dialog (window.hvConfirm, window.hvPrompt) ──

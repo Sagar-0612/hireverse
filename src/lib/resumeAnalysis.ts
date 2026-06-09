@@ -564,3 +564,77 @@ export function analyzeResume(text: string, filename: string, job: JobLike): Res
     recommendation: getRecommendation(score),
   };
 }
+
+// ── Re-application detection ──
+//
+// A resume re-uploaded for a job the same person already applied to is only a
+// genuine duplicate when NEITHER side of the application has materially moved:
+// the JD they're applying against reads the same, AND their own profile
+// (experience/skills/achievements) reads the same. Reordering the same list of
+// skills, or a JD whose unrelated metadata changed but whose actual ask didn't,
+// must NOT count as "different" — only a concrete, substantive change should
+// unlock a fresh application. Both fingerprints below are built from
+// order-independent, normalized sets for exactly that reason.
+
+interface JdLike {
+  title?: string;
+  description?: string;
+  requiredSkills?: string[];
+  niceToHaveSkills?: string[];
+  education?: string;
+  level?: string;
+}
+
+const normText = (s?: string) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const normSet = (arr?: string[]) => [...new Set((arr || []).map(normText).filter(Boolean))].sort();
+
+// Deterministic, dependency-free fingerprint (FNV-1a) — small, stable across
+// runs, and order-independent thanks to the normalized/sorted inputs above. A
+// real crypto hash would be overkill for "did this JD's substance change".
+function fingerprint(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = (hash * 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+// Captures the substance of a JD — what it's actually asking for — not its
+// formatting or field order. Two JDs that ask for the same things in a
+// different order, or with re-flowed whitespace, fingerprint identically.
+export function jdFingerprint(job: JdLike): string {
+  return fingerprint(JSON.stringify({
+    title: normText(job.title),
+    description: normText(job.description),
+    requiredSkills: normSet(job.requiredSkills),
+    niceToHaveSkills: normSet(job.niceToHaveSkills),
+    education: normText(job.education),
+    level: normText(job.level),
+  }));
+}
+
+interface ProfileLike {
+  experience?: number;
+  skills?: string[];
+  practicalSkills?: string[];
+  achievements?: string[];
+}
+
+const sameSet = (a?: string[], b?: string[]): boolean => {
+  const sa = normSet(a);
+  const sb = normSet(b);
+  return sa.length === sb.length && sa.every((v, i) => v === sb[i]);
+};
+
+// True when the new resume reads as a concretely different profile from the
+// one already on file — not just the same facts in a different order. A
+// rounding-level experience wobble or a reshuffled skill list doesn't count;
+// an actual gain/loss of skills, achievements, or a real seniority shift does.
+export function hasMeaningfulProfileChange(existing: ProfileLike, incoming: ProfileLike): boolean {
+  if (Math.abs((existing.experience ?? 0) - (incoming.experience ?? 0)) >= 1) return true;
+  if (!sameSet(existing.skills, incoming.skills)) return true;
+  if (!sameSet(existing.practicalSkills, incoming.practicalSkills)) return true;
+  if (!sameSet(existing.achievements, incoming.achievements)) return true;
+  return false;
+}

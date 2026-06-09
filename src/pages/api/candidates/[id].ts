@@ -4,7 +4,7 @@ import { Candidate } from '../../../db/models/Candidate';
 import { Interview } from '../../../db/models/Interview';
 import { Job } from '../../../db/models/Job';
 import { Types } from 'mongoose';
-import { findStage, isValidStageTransition } from '../../../lib/pipeline';
+import { findStage, isValidStageTransition, findInterviewGateStage } from '../../../lib/pipeline';
 import { logActivity } from '../../../lib/activity';
 
 const json = (data: unknown, status = 200) =>
@@ -63,6 +63,31 @@ export const PUT: APIRoute = async ({ params, request }) => {
       const fromStage = findStage(job.pipeline, candidate.currentStage);
       const toStage = findStage(job.pipeline, body.currentStage);
       if (!toStage) return json({ error: 'Unknown pipeline stage' }, 400);
+
+      // Moving a candidate past the pipeline's interview stage is exactly the
+      // moment their AI read should stop being "resume score, frozen" and
+      // start being grounded in real interview signal — that's the whole
+      // premise of the dynamic, blended assessment shown on their profile. If
+      // nobody has captured a completed, analyzed interview for them yet, that
+      // promise silently breaks: the journey says they cleared the interview
+      // bar, but the profile is still running on the resume alone. Surfacing
+      // that gap (with a deliberate override) keeps the two in sync rather
+      // than letting it slip through unnoticed.
+      const gateStage = findInterviewGateStage(job.pipeline);
+      if (gateStage && toStage.order > gateStage.order && body.confirmSkipInterview !== true) {
+        const hasAnalyzedInterview = await Interview.exists({
+          candidateId: candidate._id,
+          status: 'completed',
+          analysis: { $exists: true, $ne: null },
+        });
+        if (!hasAnalyzedInterview) {
+          return json({
+            error: `${candidate.name} doesn't have a completed, analyzed interview on record yet — moving them to "${toStage.label}" now means their AI score and recommendation will keep running on the resume alone, out of step with a journey that says they've cleared the interview stage. Add the interview's feedback (and transcript, if you have it) first, or confirm you want to move them anyway.`,
+            code: 'NO_ANALYZED_INTERVIEW',
+            requiresConfirmation: true,
+          }, 409);
+        }
+      }
 
       candidate.stageHistory.push({
         stageKey: toStage.key,

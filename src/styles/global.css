@@ -711,10 +711,11 @@ td {
 }
 
 .hv-toast {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 12px 14px;
+  padding: 12px 14px 14px;
   border-radius: 8px;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -723,9 +724,28 @@ td {
   opacity: 0;
   transform: translateX(16px);
   transition: opacity 180ms ease, transform 180ms ease;
+  overflow: hidden;
 }
 .dark .hv-toast { box-shadow: 0 8px 24px -8px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.06); }
 .hv-toast.show { opacity: 1; transform: translateX(0); }
+.hv-toast-progress-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--bg-soft-2);
+}
+.hv-toast-progress {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: #9ca3af;
+  transition: width linear;
+}
+.hv-toast-success .hv-toast-progress { background: #10b981; }
+.hv-toast-error .hv-toast-progress { background: #ef4444; }
+.hv-toast-info .hv-toast-progress { background: #3b82f6; }
 .hv-toast-icon { flex-shrink: 0; display: flex; margin-top: 1px; }
 .hv-toast-msg { font-size: 13px; line-height: 1.5; color: var(--fg); flex: 1; }
 .hv-toast-close {

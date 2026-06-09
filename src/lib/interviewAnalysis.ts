@@ -68,7 +68,11 @@ const TECHNICAL_SIGNALS: SignalPattern[] = [
   NEG(/\b(?:could not|couldn'?t|unable to|failed to|didn'?t|did not)\b[^.?!]{0,40}\b(?:solve|answer|complete|finish|explain|implement|debug|optimi[sz]e)\b/i, 'could not complete or explain the core technical task', 3),
   NEG(/\b(?:struggled|fumbled|floundered)\b[^.?!]{0,40}\b(?:with|through|on)\b[^.?!]{0,40}\b(?:problem|question|exercise|design|code|algorithm|debugging)\b/i, 'struggled with the core technical exercise', 2.5),
   NEG(/\b(?:lack(?:ed|s|ing)?|gaps? in|limited|weak|shaky|no)\b[^.?!]{0,30}\b(?:technical|fundamental|domain|coding)\b[^.?!]{0,30}\b(?:knowledge|understanding|skills?|depth|fundamentals?)\b/i, 'showed gaps in fundamental technical knowledge', 3),
-  NEG(/\b(?:guessed|memoriz(?:ed|ing)|rote)\b[^.?!]{0,40}\b(?:without|with no|lacking)\b[^.?!]{0,30}\b(?:understanding|reasoning|comprehension)\b/i, 'answers seemed memorized rather than understood', 2),
+  // Covers both the rigid "memorized without understanding" framing and the
+  // equally common comparative one — "leaned more memorized than reasoned
+  // through" — which says the same thing about rote-vs-real understanding but
+  // in a shape the original pattern's "without/lacking" connector couldn't see.
+  NEG(/\b(?:guessed|memoriz(?:ed|ing)|rote)\b[^.?!]{0,40}\b(?:without|with no|lacking|rather than|instead of|more(?:\s+\w+){0,2}\s+than|than)\b[^.?!]{0,30}\b(?:understanding|reasoning|comprehension|reasoned(?:\s+through)?|genuinely (?:grasping|understanding)|real(?:ly)? (?:grasping|understanding|reasoning))\b/i, 'answers seemed memorized rather than genuinely understood', 2),
   NEG(/\bincorrect (?:approach|solution|answer|implementation|reasoning)\b/i, 'landed on an incorrect technical approach', 2),
   NEG(/\bcouldn'?t (?:get|write|produce)[^.?!]{0,30}\bworking\b/i, 'could not produce a working solution', 2.5),
   // Distinct from the "lacks ... technical/domain ... knowledge" pattern above —
@@ -115,9 +119,16 @@ const VERDICT_SIGNALS: SignalPattern[] = [
   // Negative lookbehinds keep "would not recommend moving him forward" from
   // also reading as a positive endorsement — the negation a few characters
   // back flips the whole phrase's meaning, so a bare substring match isn't
-  // enough here the way it's safe to be elsewhere.
-  POS(/(?<!\b(?:not|never)\s)(?<!n't\s)\b(?:strongly recommend|hire(?:d)? (?:them|him|her)|move (?:them|him|her)?\s*forward|advance (?:them|him|her)?\s*to|great fit|excellent fit|top candidate|would love to have (?:them|him|her))\b/i, 'interviewer explicitly advocated moving forward', 4),
-  POS(/(?<!\b(?:not|never)\s)(?<!n't\s)\b(?:recommend (?:moving|advancing|proceeding)|next round|good fit|solid fit|worth (?:advancing|progressing))\b/i, 'interviewer leaned toward advancing the candidate', 2.5),
+  // enough here the way it's safe to be elsewhere. The lookahead alongside it
+  // closes a second, sneakier version of the same trap: "On paper this looked
+  // like a great fit, but I would not recommend moving them forward" — the
+  // positive phrase comes FIRST as a deliberate setup for the contrast that
+  // follows. Without this, the system would credit the interviewer with
+  // "explicitly advocating moving forward" in the very same breath it
+  // correctly caught them explicitly recommending against it — an internally
+  // contradictory read that understates a clearly negative verdict.
+  POS(/(?<!\b(?:not|never)\s)(?<!n't\s)\b(?:strongly recommend|hire(?:d)? (?:them|him|her)|move (?:them|him|her)?\s*forward|advance (?:them|him|her)?\s*to|great fit|excellent fit|top candidate|would love to have (?:them|him|her))\b(?![^.?!]{0,80}\b(?:would not|wouldn'?t|will not|won'?t|do not|don'?t|does not|doesn'?t|should not|shouldn'?t|can'?t|cannot)\s+(?:recommend|hire|advance|move (?:them|him|her)?\s*forward)\b)/i, 'interviewer explicitly advocated moving forward', 4),
+  POS(/(?<!\b(?:not|never)\s)(?<!n't\s)\b(?:recommend (?:moving|advancing|proceeding)|next round|good fit|solid fit|worth (?:advancing|progressing))\b(?![^.?!]{0,80}\b(?:would not|wouldn'?t|will not|won'?t|do not|don'?t|does not|doesn'?t|should not|shouldn'?t|can'?t|cannot)\s+(?:recommend|hire|advance|move (?:them|him|her)?\s*forward)\b)/i, 'interviewer leaned toward advancing the candidate', 2.5),
   // The interviewer's opening characterization of the *person* — "exceptional
   // candidate", "outstanding candidate" — is one of the strongest, most direct
   // bottom-line statements a write-up can contain, and is common phrasing for

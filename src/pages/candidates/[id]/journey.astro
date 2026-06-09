@@ -249,6 +249,34 @@ const totalSteps = pipeline.length || 1;
 </AppLayout>
 
 <script define:vars={{ candidateId: candidate.id }}>
+  async function moveCandidateStage(currentStage, notes, confirmSkipInterview) {
+    const res = await fetch(`/api/candidates/${candidateId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentStage, notes, ...(confirmSkipInterview ? { confirmSkipInterview: true } : {}) }),
+    });
+    if (res.ok) {
+      window.location.reload();
+      return;
+    }
+    const err = await res.json().catch(() => ({}));
+    // The API blocks moving someone past the interview stage with no analyzed
+    // interview on file — surfacing that gap here, with a deliberate way past
+    // it, rather than letting the stage and the AI read silently fall out of sync.
+    if (err.code === 'NO_ANALYZED_INTERVIEW') {
+      const proceed = await window.hvConfirm({
+        title: 'No analyzed interview on record',
+        message: `${err.error}\n\nMove them anyway?`,
+        confirmLabel: 'Move anyway',
+        cancelLabel: 'Go add feedback first',
+        destructive: true,
+      });
+      if (proceed) await moveCandidateStage(currentStage, notes, true);
+      return;
+    }
+    window.hvToast(err.error || 'Failed to update stage.', 'error');
+  }
+
   document.getElementById('move-stage-btn')?.addEventListener('click', async () => {
     const currentStage = document.getElementById('stage-select').value;
     const notes = await window.hvPrompt({
@@ -258,16 +286,7 @@ const totalSteps = pipeline.length || 1;
       confirmLabel: 'Move',
     });
     if (notes === null) return;
-    const res = await fetch(`/api/candidates/${candidateId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ currentStage, notes }),
-    });
-    if (res.ok) window.location.reload();
-    else {
-      const err = await res.json().catch(() => ({}));
-      window.hvToast(err.error || 'Failed to update stage.', 'error');
-    }
+    await moveCandidateStage(currentStage, notes, false);
   });
 
   document.getElementById('reject-btn')?.addEventListener('click', async () => {

@@ -47,6 +47,11 @@ export interface ICandidate extends Document {
   practicalSkills: string[];
   achievements: string[];
   notes: string;
+  // Fingerprint of the job's JD content (title/description/skills/education/level)
+  // captured at the moment this candidate's resume was last (re-)applied against
+  // it — lets a later re-upload tell "JD genuinely changed since they applied"
+  // apart from "nothing material changed, this is the same application again".
+  appliedJdHash: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -76,6 +81,7 @@ const CandidateSchema = new Schema<ICandidate>(
     practicalSkills:    { type: [String], default: [] },
     achievements:       { type: [String], default: [] },
     notes:              { type: String, default: '' },
+    appliedJdHash:      { type: String, default: '' },
   },
   { timestamps: true }
 );

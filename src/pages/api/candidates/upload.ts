@@ -3,7 +3,7 @@ import { connectDB } from '../../../db/connection';
 import { Candidate } from '../../../db/models/Candidate';
 import { Job } from '../../../db/models/Job';
 import { Types } from 'mongoose';
-import { extractResumeText, analyzeResume } from '../../../lib/resumeAnalysis';
+import { extractResumeText, analyzeResume, jdFingerprint, hasMeaningfulProfileChange } from '../../../lib/resumeAnalysis';
 import { sortedPipeline } from '../../../lib/pipeline';
 import { logActivity } from '../../../lib/activity';
 
@@ -30,12 +30,17 @@ export const POST: APIRoute = async ({ request }) => {
     const firstStage = sortedPipeline(job.pipeline)[0];
     if (!firstStage) return json({ error: 'This job has no hiring pipeline configured' }, 400);
 
-    const existing = await Candidate.find({ jobId }, 'email resumeName').lean();
-    const seenEmails = new Set(existing.map(c => c.email).filter(Boolean));
-    const seenResumeNames = new Set(existing.map(c => c.resumeName).filter(Boolean));
+    // Current JD's fingerprint — captured once so every file in this batch is
+    // judged against the exact same "has the ask actually changed?" baseline.
+    const currentJdHash = jdFingerprint(job);
 
-    const created = [];
-    let duplicates = 0;
+    const existing = await Candidate.find({ jobId }).lean();
+    const byEmail = new Map(existing.filter(c => c.email).map(c => [c.email.toLowerCase(), c]));
+    const byResumeName = new Map(existing.filter(c => !c.email && c.resumeName).map(c => [c.resumeName, c]));
+
+    const created: any[] = [];
+    const updated: any[] = [];
+    const notices: { type: 'duplicate' | 'reapplied'; message: string }[] = [];
 
     for (const file of files) {
       if (!file.name) continue;
@@ -53,19 +58,75 @@ export const POST: APIRoute = async ({ request }) => {
         level: job.level,
       });
 
-      // A candidate is a duplicate of one already on this job if their parsed
-      // email matches, or — when no email could be parsed — their resume
-      // filename matches exactly.
-      const dupKey = analysis.email || file.name;
-      const isDuplicate = analysis.email
-        ? seenEmails.has(analysis.email)
-        : seenResumeNames.has(file.name);
-      if (isDuplicate) {
-        duplicates++;
+      // A resume matches a candidate already on this job by parsed email, or —
+      // when no email could be parsed — by an exact resume-filename match.
+      const emailKey = analysis.email ? analysis.email.toLowerCase() : '';
+      const match = emailKey ? byEmail.get(emailKey) : byResumeName.get(file.name);
+
+      if (match) {
+        // Same person, same job — but is this actually a *new* application, or
+        // the same one again? Only a real change on either side (the JD now
+        // asks for something different, or their profile genuinely reads
+        // differently — not just reshuffled) earns them a fresh look.
+        const jdChanged = !match.appliedJdHash || match.appliedJdHash !== currentJdHash;
+        const profileChanged = hasMeaningfulProfileChange(match, analysis);
+
+        if (!jdChanged && !profileChanged) {
+          notices.push({
+            type: 'duplicate',
+            message: `${analysis.name || match.name} has already applied to this role and nothing concrete has changed — same JD, same experience/skills/achievements (just possibly reordered). Skipped as a duplicate; "${file.name}" was not added.`,
+          });
+          continue;
+        }
+
+        const why = jdChanged && profileChanged
+          ? 'the JD has been revised since they applied and their resume now reads differently'
+          : jdChanged
+            ? 'the JD has been revised since they applied'
+            : 'their resume now reads with concretely different experience, skills, or achievements';
+
+        const doc = await Candidate.findById(match._id);
+        if (doc) {
+          doc.name = analysis.name || doc.name;
+          doc.phone = analysis.phone || doc.phone;
+          doc.location = analysis.location || doc.location;
+          doc.locationConfidence = analysis.locationConfidence;
+          doc.score = analysis.score;
+          doc.experience = analysis.experience;
+          doc.skillsMatch = analysis.skillsMatch;
+          doc.educationMatch = analysis.educationMatch;
+          doc.recommendation = analysis.recommendation;
+          doc.resumeName = file.name;
+          doc.resumeType = mimeType;
+          doc.resumeBase64 = base64;
+          doc.skills = analysis.skills;
+          doc.practicalSkills = analysis.practicalSkills;
+          doc.achievements = analysis.achievements;
+          doc.appliedJdHash = currentJdHash;
+          await doc.save();
+
+          const updatedObj = { ...doc.toObject(), _id: doc._id.toString() };
+          updated.push(updatedObj);
+          notices.push({
+            type: 'reapplied',
+            message: `${doc.name} re-applied for "${job.title}" — ${why}, so this counts as a real re-application. Their record was refreshed with the new resume (their stage and progress were left untouched).`,
+          });
+
+          await logActivity({
+            type: 'candidate',
+            action: 'candidate_reapplied',
+            message: `${doc.name} re-applied for "${job.title}" with an updated resume — ${why}`,
+            entityType: 'candidate',
+            entityId: doc._id.toString(),
+            jobId,
+            candidateId: doc._id.toString(),
+          });
+
+          if (emailKey) byEmail.set(emailKey, updatedObj as any);
+          else byResumeName.set(file.name, updatedObj as any);
+        }
         continue;
       }
-      if (analysis.email) seenEmails.add(analysis.email);
-      else seenResumeNames.add(file.name);
 
       const candidate = await Candidate.create({
         jobId,
@@ -86,24 +147,33 @@ export const POST: APIRoute = async ({ request }) => {
         skills: analysis.skills,
         practicalSkills: analysis.practicalSkills,
         achievements: analysis.achievements,
+        appliedJdHash: currentJdHash,
       });
 
-      created.push({ ...candidate.toObject(), _id: candidate._id.toString() });
+      const createdObj = { ...candidate.toObject(), _id: candidate._id.toString() };
+      created.push(createdObj);
+      if (emailKey) byEmail.set(emailKey, createdObj as any);
+      else byResumeName.set(file.name, createdObj as any);
     }
 
-    if (created.length) {
+    const duplicates = notices.filter(n => n.type === 'duplicate').length;
+
+    if (created.length || updated.length) {
+      const parts = [];
+      if (created.length) parts.push(`${created.length} new candidate${created.length === 1 ? '' : 's'}`);
+      if (updated.length) parts.push(`${updated.length} re-application${updated.length === 1 ? '' : 's'} refreshed`);
       await logActivity({
         type: 'candidate',
         action: 'candidates_uploaded',
-        message: `${created.length} candidate${created.length === 1 ? '' : 's'} uploaded for "${job.title}"${duplicates ? ` (${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped)` : ''}`,
+        message: `${parts.join(' and ')} for "${job.title}"${duplicates ? ` (${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped)` : ''}`,
         entityType: 'job',
         entityId: jobId,
         jobId,
-        meta: { count: created.length, duplicates },
+        meta: { count: created.length, updated: updated.length, duplicates },
       });
     }
 
-    return json({ uploaded: created.length, duplicates, candidates: created }, 201);
+    return json({ uploaded: created.length, updated: updated.length, duplicates, candidates: created, updatedCandidates: updated, notices }, 201);
   } catch (err: any) {
     console.error('Upload error:', err);
     return json({ error: err.message }, 500);

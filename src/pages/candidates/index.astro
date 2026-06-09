@@ -302,7 +302,15 @@ const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } 
         uploadResult.style.display = 'block';
         uploadResult.style.background = '#d1fae5';
         uploadResult.style.color = '#065f46';
-        uploadResult.textContent = `✓ ${data.uploaded} resume(s) uploaded and scored. Refreshing…`;
+        const parts = [];
+        if (data.uploaded) parts.push(`${data.uploaded} new resume${data.uploaded === 1 ? '' : 's'} uploaded and scored`);
+        if (data.updated) parts.push(`${data.updated} re-application${data.updated === 1 ? '' : 's'} refreshed`);
+        if (data.duplicates) parts.push(`${data.duplicates} duplicate${data.duplicates === 1 ? '' : 's'} skipped`);
+        uploadResult.textContent = `✓ ${parts.join(', ') || 'Nothing new to add'}. Refreshing…`;
+        if (data.uploaded || data.updated) {
+          window.hvToast(parts.join(' · '), 'success');
+        }
+        (data.notices || []).forEach((n) => window.hvToast(n.message, n.type === 'duplicate' ? 'info' : 'success'));
         setTimeout(() => window.location.reload(), 1500);
       } else {
         const err = await res.json();
@@ -311,6 +319,7 @@ const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } 
         uploadResult.style.background = '#fee2e2';
         uploadResult.style.color = '#991b1b';
         uploadResult.textContent = `Error: ${err.error || 'Upload failed'}`;
+        window.hvToast(err.error || 'Upload failed', 'error');
         uploadSubmit.disabled = false;
       }
     } catch {
@@ -319,6 +328,7 @@ const activeJobs = await Job.find({ status: { $in: ['active', 'interviewing'] } 
       uploadResult.style.background = '#fee2e2';
       uploadResult.style.color = '#991b1b';
       uploadResult.textContent = 'Network error. Please try again.';
+      window.hvToast('Network error. Please try again.', 'error');
       uploadSubmit.disabled = false;
     }
   });

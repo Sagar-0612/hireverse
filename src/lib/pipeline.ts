@@ -86,6 +86,17 @@ export function isValidStageTransition(pipeline: PipelineStage[] = [], fromKey: 
   return to.order >= from.order;
 }
 
+// The first stage in a job's pipeline that's actually about interviewing —
+// detected from the stage's own name rather than hardcoded, since pipelines
+// are fully configurable per job. Used as the line in the sand for "has this
+// candidate's interview signal actually been captured yet" checks: moving
+// someone past this point without a real, analyzed interview on file is
+// exactly the kind of stage/data desync that leaves their profile frozen on
+// resume-only signal while the journey says they've cleared the bar.
+export function findInterviewGateStage(pipeline: PipelineStage[] = []): PipelineStage | undefined {
+  return sortedPipeline(pipeline).find(s => /interview/i.test(s.key) || /interview/i.test(s.label));
+}
+
 export function isHiredStage(pipeline: PipelineStage[] = [], stageKey: string): boolean {
   const sorted = sortedPipeline(pipeline);
   if (!sorted.length) return false;
