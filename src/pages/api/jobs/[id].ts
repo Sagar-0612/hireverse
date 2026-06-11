@@ -4,6 +4,7 @@ import { Job } from '../../../db/models/Job';
 import { Candidate } from '../../../db/models/Candidate';
 import { Interview } from '../../../db/models/Interview';
 import { logActivity } from '../../../lib/activity';
+import { normalizeTitle } from '../../../lib/text';
 import { Types } from 'mongoose';
 
 const json = (data: unknown, status = 200) =>
@@ -33,6 +34,19 @@ export const PUT: APIRoute = async ({ params, request }) => {
 
     const existing = await Job.findById(id);
     if (!existing) return json({ error: 'Not found' }, 404);
+
+    if (typeof body.title === 'string') {
+      const title = body.title.trim();
+      const normalized = normalizeTitle(title);
+      if (normalized && normalized !== normalizeTitle(existing.title)) {
+        const allTitles = await Job.find({ _id: { $ne: id } }, { title: 1 }).lean();
+        const dupe = allTitles.find(j => normalizeTitle(j.title) === normalized);
+        if (dupe) {
+          return json({ error: `A job titled "${title}" already exists. Choose a different title.` }, 409);
+        }
+      }
+      body.title = title;
+    }
 
     let pipelineChanged = false;
     if (body.pipeline !== undefined) {

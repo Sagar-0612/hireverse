@@ -126,6 +126,7 @@ export const POST: APIRoute = async ({ request }) => {
           doc.skills = analysis.skills;
           doc.practicalSkills = analysis.practicalSkills;
           doc.achievements = analysis.achievements;
+          doc.skillGaps = analysis.skillGaps as any;
           doc.appliedJdHash = currentJdHash;
           await doc.save();
 
@@ -171,6 +172,7 @@ export const POST: APIRoute = async ({ request }) => {
         skills: analysis.skills,
         practicalSkills: analysis.practicalSkills,
         achievements: analysis.achievements,
+        skillGaps: analysis.skillGaps,
         appliedJdHash: currentJdHash,
       });
 

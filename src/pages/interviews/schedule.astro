@@ -2,29 +2,54 @@
 import AppLayout from "../../layouts/AppLayout.astro";
 import { connectDB } from "../../db/connection";
 import { Candidate } from "../../db/models/Candidate";
+import { Interview } from "../../db/models/Interview";
 import { Team } from "../../db/models/Team";
-import { sortedPipeline, bucketForCandidate } from "../../lib/pipeline";
+import { sortedPipeline, bucketForCandidate, hasUpcomingInterviewStage, isInterviewStage } from "../../lib/pipeline";
 
 await connectDB();
 const rawCandidates = await Candidate.find({ rejected: { $ne: true } })
   .populate('jobId', 'title pipeline')
   .lean();
 
-// Only candidates still moving through a pipeline (not yet at the final/"hired"
-// stage and not rejected) are schedulable for further rounds.
+// A candidate can't be scheduled twice for the same pipeline stage — fetch
+// every still-active (scheduled/completed) interview so those stages can be
+// dropped from the per-candidate stage picker below.
+const activeInterviews = await Interview.find({ status: { $in: ['scheduled', 'completed'] } }, 'candidateId pipelineStage').lean();
+const takenStagesByCandidate = new Map<string, Set<string>>();
+for (const iv of activeInterviews) {
+  const cid = iv.candidateId.toString();
+  if (!takenStagesByCandidate.has(cid)) takenStagesByCandidate.set(cid, new Set());
+  takenStagesByCandidate.get(cid)!.add(iv.pipelineStage);
+}
+
+// Only candidates who have at least one interview-type stage at or ahead of
+// their current position — no point offering to schedule someone for an
+// interview when their entire remaining pipeline is coding tests and offers.
 const candidates = rawCandidates
-  .filter(c => bucketForCandidate(c, (c.jobId as any)?.pipeline || []) !== 'Hired')
+  .filter(c => {
+    const pipeline = (c.jobId as any)?.pipeline || [];
+    return bucketForCandidate(c, pipeline) !== 'Hired' &&
+           hasUpcomingInterviewStage(pipeline, c.currentStage);
+  })
   .map(c => {
     const pipeline = sortedPipeline((c.jobId as any)?.pipeline || []);
+    const taken = takenStagesByCandidate.get(c._id.toString()) || new Set();
+    // Only expose interview-type stages so the dropdown never lets you pick
+    // "Coding Test" or "Offer" as an interview round — and never a stage
+    // this candidate already has a scheduled/completed interview for.
+    const interviewStages = pipeline
+      .filter(s => isInterviewStage(s) && !taken.has(s.key))
+      .map(s => ({ key: s.key, label: s.label }));
     return {
       id: c._id.toString(),
       name: c.name,
       jobTitle: (c.jobId as any)?.title || '',
       jobId: (c.jobId as any)?._id?.toString() || '',
       currentStage: c.currentStage,
-      stages: pipeline.map(s => ({ key: s.key, label: s.label })),
+      stages: interviewStages,
     };
-  });
+  })
+  .filter(c => c.stages.length > 0);
 
 const teamMembers = await Team.find({ status: 'active' }).lean();
 
@@ -49,8 +74,8 @@ const today = new Date().toISOString().split('T')[0];
 
     {candidates.length === 0 ? (
       <div class="card shadow-lvl-2 empty-state" style="padding:32px;">
-        <div style="font-size:15px;font-weight:500;color:var(--fg);margin-bottom:4px;">No schedulable candidates</div>
-        <div style="font-size:13px;">Every candidate is either hired or rejected — upload resumes or move someone forward in their pipeline first.</div>
+        <div style="font-size:15px;font-weight:500;color:var(--fg);margin-bottom:4px;">No candidates ready for an interview</div>
+        <div style="font-size:13px;">No active candidate has an interview-type stage at or ahead of their current position. Check if someone needs to be moved forward, or use <a href="/assessments/create" style="color:var(--fg);">Create Assessment</a> for coding/written rounds.</div>
       </div>
     ) : (
     <form id="schedule-form" style="display:flex;flex-direction:column;gap:20px;">
@@ -154,8 +179,12 @@ const today = new Date().toISOString().split('T')[0];
       return;
     }
     const stages = JSON.parse(stagesJson);
+    // Default to the stage that matches (or is closest to) the candidate's
+    // current position — if no exact match (because current is not interview-
+    // type), fall back to the first interview stage in the list.
+    const defaultKey = stages.find(s => s.key === currentStage)?.key || stages[0]?.key || '';
     stageSelect.innerHTML = stages.map(s =>
-      `<option value="${s.key}" ${s.key === currentStage ? 'selected' : ''}>${s.label}</option>`
+      `<option value="${s.key}" ${s.key === defaultKey ? 'selected' : ''}>${s.label}</option>`
     ).join('');
     stageSelect.disabled = stages.length === 0;
     syncRoundFromStage();

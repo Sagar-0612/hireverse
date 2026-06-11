@@ -23,6 +23,25 @@ const StageHistorySchema = new Schema<IStageHistoryEntry>(
   { _id: false }
 );
 
+export interface ISkillGap {
+  skill: string;
+  status: 'practical' | 'listed' | 'related' | 'missing';
+  relatedSkill?: string;
+  score: number;
+  required: boolean;
+}
+
+const SkillGapSchema = new Schema<ISkillGap>(
+  {
+    skill:        { type: String, required: true },
+    status:       { type: String, enum: ['practical', 'listed', 'related', 'missing'], required: true },
+    relatedSkill: { type: String },
+    score:        { type: Number, default: 0 },
+    required:     { type: Boolean, default: true },
+  },
+  { _id: false }
+);
+
 export interface ICandidate extends Document {
   jobId: Types.ObjectId;
   name: string;
@@ -46,6 +65,7 @@ export interface ICandidate extends Document {
   skills: string[];
   practicalSkills: string[];
   achievements: string[];
+  skillGaps: ISkillGap[];
   notes: string;
   // Fingerprint of the job's JD content (title/description/skills/education/level)
   // captured at the moment this candidate's resume was last (re-)applied against
@@ -80,6 +100,7 @@ const CandidateSchema = new Schema<ICandidate>(
     skills:             [{ type: String }],
     practicalSkills:    { type: [String], default: [] },
     achievements:       { type: [String], default: [] },
+    skillGaps:          { type: [SkillGapSchema], default: [] },
     notes:              { type: String, default: '' },
     appliedJdHash:      { type: String, default: '' },
   },

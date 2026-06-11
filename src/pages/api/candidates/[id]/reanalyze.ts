@@ -55,6 +55,7 @@ export const POST: APIRoute = async ({ params }) => {
   candidate.skills = analysis.skills;
   candidate.practicalSkills = analysis.practicalSkills;
   candidate.achievements = analysis.achievements;
+  candidate.skillGaps = analysis.skillGaps as any;
   candidate.skillsMatch = analysis.skillsMatch;
   candidate.educationMatch = analysis.educationMatch;
   candidate.score = analysis.score;

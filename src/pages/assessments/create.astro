@@ -1,0 +1,168 @@
+---
+import AppLayout from "../../layouts/AppLayout.astro";
+import { connectDB } from "../../db/connection";
+import { Candidate } from "../../db/models/Candidate";
+import { Assessment } from "../../db/models/Assessment";
+import { sortedPipeline, bucketForCandidate, hasUpcomingAssessmentStage, isAssessmentStage } from "../../lib/pipeline";
+
+await connectDB();
+const rawCandidates = await Candidate.find({ rejected: { $ne: true } })
+  .populate('jobId', 'title pipeline')
+  .lean();
+
+// A candidate can't be assessed twice for the same pipeline stage — fetch
+// every existing assessment so those stages can be dropped from the
+// per-candidate stage picker below.
+const existingAssessments = await Assessment.find({}, 'candidateId pipelineStage').lean();
+const takenStagesByCandidate = new Map<string, Set<string>>();
+for (const a of existingAssessments) {
+  const cid = a.candidateId.toString();
+  if (!takenStagesByCandidate.has(cid)) takenStagesByCandidate.set(cid, new Set());
+  takenStagesByCandidate.get(cid)!.add(a.pipelineStage);
+}
+
+const candidates = rawCandidates
+  .filter(c => {
+    const pipeline = (c.jobId as any)?.pipeline || [];
+    return bucketForCandidate(c, pipeline) !== 'Hired' &&
+           hasUpcomingAssessmentStage(pipeline, c.currentStage);
+  })
+  .map(c => {
+    const pipeline = sortedPipeline((c.jobId as any)?.pipeline || []);
+    const taken = takenStagesByCandidate.get(c._id.toString()) || new Set();
+    const assessmentStages = pipeline
+      .filter(s => isAssessmentStage(s) && !taken.has(s.key))
+      .map(s => ({ key: s.key, label: s.label }));
+    return {
+      id: c._id.toString(),
+      name: c.name,
+      jobTitle: (c.jobId as any)?.title || '',
+      currentStage: c.currentStage,
+      assessmentStages,
+    };
+  })
+  .filter(c => c.assessmentStages.length > 0);
+
+const preselected = Astro.url.searchParams.get('candidate') || '';
+---
+
+<AppLayout title="Create Assessment" activeNav="interviews">
+  <div style="max-width:640px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:28px;">
+      <a href="/interviews" class="btn btn-ghost btn-sm" style="padding:0;width:28px;height:28px;border-radius:6px;border:1px solid var(--border);">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2L4 7l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      <div>
+        <h1 style="font-size:22px;font-weight:600;color:var(--fg);letter-spacing:-0.4px;margin:0;">Create Assessment</h1>
+        <p style="font-size:13px;color:var(--fg-mute);margin:4px 0 0;">Set up a coding or written assessment for a candidate.</p>
+      </div>
+    </div>
+
+    <div id="error-banner" style="display:none;background:var(--bg-soft);border:1px solid #ee0000;border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#ee0000;"></div>
+
+    {candidates.length === 0 ? (
+      <div class="card shadow-lvl-2 empty-state" style="padding:32px;">
+        <div style="font-size:15px;font-weight:500;color:var(--fg);margin-bottom:4px;">No candidates ready for assessment</div>
+        <div style="font-size:13px;">No active candidate has a coding test or written assessment stage ahead of them.</div>
+      </div>
+    ) : (
+    <form id="assessment-form" style="display:flex;flex-direction:column;gap:20px;">
+      <div class="card shadow-lvl-2">
+        <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Candidate & Stage</h2>
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          <div>
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Candidate <span style="color:#ee0000;">*</span></label>
+            <select id="candidate-select" name="candidateId" class="select" required>
+              <option value="">Select candidate…</option>
+              {candidates.map(c => (
+                <option
+                  value={c.id}
+                  selected={c.id === preselected}
+                  data-stages={JSON.stringify(c.assessmentStages)}
+                  data-current-stage={c.currentStage}
+                >{c.name}{c.jobTitle ? ` — ${c.jobTitle}` : ''}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Assessment Stage <span style="color:#ee0000;">*</span></label>
+            <select id="stage-select" name="pipelineStage" class="select" required disabled>
+              <option value="">Select a candidate first…</option>
+            </select>
+            <p style="font-size:12px;color:var(--fg-mute);margin:6px 0 0;">Only assessment-type stages are shown. Selecting one ahead of the candidate's current position will auto-advance them.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card shadow-lvl-2">
+        <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Instructions (Optional)</h2>
+        <textarea name="instructions" class="input" style="height:120px;padding:10px 12px;resize:vertical;" placeholder="Describe the task, problem statement, time limit, language constraints, or anything the candidate needs to know…"></textarea>
+        <p style="font-size:12px;color:var(--fg-mute);margin:6px 0 0;">You can add or update instructions later from the assessment page.</p>
+      </div>
+
+      <div style="display:flex;gap:10px;justify-content:flex-end;padding-bottom:32px;">
+        <a href="/interviews" class="btn btn-secondary">Cancel</a>
+        <button type="submit" id="submit-btn" class="btn btn-primary">Create Assessment</button>
+      </div>
+    </form>
+    )}
+  </div>
+</AppLayout>
+
+<script define:vars={{ preselected }}>
+  const candidateSelect = document.getElementById('candidate-select');
+  const stageSelect = document.getElementById('stage-select');
+
+  function populateStages() {
+    const opt = candidateSelect?.options[candidateSelect.selectedIndex];
+    const stagesJson = opt?.dataset.stages;
+    const currentStage = opt?.dataset.currentStage || '';
+    if (!stagesJson) {
+      stageSelect.innerHTML = '<option value="">Select a candidate first…</option>';
+      stageSelect.disabled = true;
+      return;
+    }
+    const stages = JSON.parse(stagesJson);
+    stageSelect.innerHTML = stages.map(s =>
+      `<option value="${s.key}" ${s.key === currentStage ? 'selected' : ''}>${s.label}</option>`
+    ).join('');
+    stageSelect.disabled = stages.length === 0;
+  }
+
+  candidateSelect?.addEventListener('change', populateStages);
+  if (preselected && candidateSelect?.value) populateStages();
+
+  document.getElementById('assessment-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const btn = document.getElementById('submit-btn');
+    const errorBanner = document.getElementById('error-banner');
+    btn.disabled = true;
+    btn.textContent = 'Creating…';
+    errorBanner.style.display = 'none';
+
+    const data = Object.fromEntries(new FormData(form));
+    try {
+      const res = await fetch('/api/assessments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        window.location.href = `/assessments/${result.id}`;
+      } else {
+        const err = await res.json();
+        errorBanner.textContent = err.error || 'Failed to create assessment.';
+        errorBanner.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Create Assessment';
+      }
+    } catch {
+      errorBanner.textContent = 'Network error. Please try again.';
+      errorBanner.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Create Assessment';
+    }
+  });
+</script>

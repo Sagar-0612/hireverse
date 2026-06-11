@@ -3,6 +3,7 @@ import AppLayout from "../../layouts/AppLayout.astro";
 import { connectDB } from "../../db/connection";
 import { Interview } from "../../db/models/Interview";
 import { findStage } from "../../lib/pipeline";
+import { scoreBadgeClass } from "../../lib/scoreColor";
 
 await connectDB();
 const rawInterviews = await Interview.find()
@@ -50,10 +51,13 @@ const uniqueInterviewers = [...new Set(interviews.map(iv => iv.interviewer).filt
       <h1 style="font-size:24px;font-weight:600;color:var(--fg);letter-spacing:-0.5px;margin:0 0 4px;">Interviews</h1>
       <p style="font-size:14px;color:var(--fg-mute);margin:0;">{scheduled.length} scheduled · {completed.length} completed</p>
     </div>
-    <a href="/interviews/schedule" class="btn btn-primary btn-sm">
-      <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="1" y="2" width="11" height="10" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M1 5.5h11M4 1v2M9 1v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4.5 8.5h4M6.5 7v3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-      Schedule Interview
-    </a>
+    <div style="display:flex;gap:8px;">
+      <a href="/assessments/create" class="btn btn-secondary btn-sm">Create Assessment</a>
+      <a href="/interviews/schedule" class="btn btn-primary btn-sm">
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="1" y="2" width="11" height="10" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M1 5.5h11M4 1v2M9 1v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4.5 8.5h4M6.5 7v3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        Schedule Interview
+      </a>
+    </div>
   </div>
 
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px;">
@@ -159,9 +163,9 @@ const uniqueInterviewers = [...new Set(interviews.map(iv => iv.interviewer).filt
                   <td style="color:var(--fg-mute);">{iv.round}</td>
                   <td style="color:var(--fg-mute);">{iv.interviewer}</td>
                   <td style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--fg-mute);">{iv.date}</td>
-                  <td><span class="badge badge-info">{iv.commScore}</span></td>
-                  <td><span class="badge badge-success">{iv.techScore}</span></td>
-                  <td><span class="badge badge-violet">{iv.confidenceScore}</span></td>
+                  <td><span class={`badge ${scoreBadgeClass(iv.commScore)}`}>{iv.commScore}</span></td>
+                  <td><span class={`badge ${scoreBadgeClass(iv.techScore)}`}>{iv.techScore}</span></td>
+                  <td><span class={`badge ${scoreBadgeClass(iv.confidenceScore)}`}>{iv.confidenceScore}</span></td>
                   <td style="font-size:12px;color:var(--fg-body);max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{iv.recommendation}</td>
                   <td><a href={`/interviews/${iv.id}`} class="btn btn-ghost btn-sm">Analysis →</a></td>
                 </tr>

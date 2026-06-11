@@ -2,6 +2,8 @@
 // requirements. Replaces random/placeholder scoring with deterministic,
 // inspectable analysis so candidates are judged on what their resume actually says.
 
+import { findRelatedEvidence } from './skillRelations.ts';
+
 interface JobLike {
   requiredSkills?: string[];
   niceToHaveSkills?: string[];
@@ -31,6 +33,26 @@ export interface ResumeAnalysis {
   educationMatch: number;
   score: number;
   recommendation: string;
+  // Per-skill breakdown across every required + nice-to-have skill — the basis
+  // for both the candidate detail page's skill bars and the gap-focused
+  // interview guide. `score` is the same 0/35/65/100 scale weightedSkillScore
+  // averages over.
+  skillGaps: SkillGap[];
+}
+
+export type SkillGapStatus = 'practical' | 'listed' | 'related' | 'missing';
+
+export interface SkillGap {
+  skill: string;
+  status: SkillGapStatus;
+  // Only set when status === 'related' — the skill actually found on the
+  // resume that's adjacent to/implies this one (e.g. "Node.js" for "REST API").
+  relatedSkill?: string;
+  score: number;
+  // True for the job's requiredSkills, false for niceToHaveSkills — keeps the
+  // candidate page and interview guide from overstating a missing
+  // nice-to-have as something "required for this role".
+  required: boolean;
 }
 
 function isLikelyText(s: string): boolean {
@@ -402,6 +424,18 @@ export function formatExperience(years: number): string {
 // matching so a JD's "NextJS" recognizes a resume's "Next.js".
 const dropDots = (s: string) => s.replace(/\./g, '');
 
+// Builds a word-boundary regex for a (already lowercased + dot-stripped)
+// skill name that also tolerates a trailing "s" mismatch in either
+// direction — so a JD's "REST APIs" recognizes a resume's "REST API" and
+// vice versa. Only applied to multi-character roots to avoid false
+// positives on short tokens (e.g. "css" -> "cs").
+export function buildSkillRegex(skill: string): RegExp {
+  const s = dropDots(skill.toLowerCase().trim());
+  const base = s.length >= 5 && s.endsWith('s') ? s.slice(0, -1) : s;
+  const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^a-z0-9+#])${escaped}s?(?:[^a-z0-9+#]|$)`, 'i');
+}
+
 // Single-edit distance — cheap enough at resume scale and exactly the
 // tolerance needed for one-letter spelling drift ("PostgresSQL" vs
 // "PostgreSQL", "Kuberentes" vs "Kubernetes") without risking false positives
@@ -430,9 +464,7 @@ function matchSkills(text: string, skills: string[]): string[] {
   return skills.filter(skill => {
     const s = dropDots(skill.toLowerCase().trim());
     if (!s) return false;
-    const escaped = s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(`(?:^|[^a-z0-9+#])${escaped}(?:[^a-z0-9+#]|$)`, 'i');
-    if (re.test(lower)) return true;
+    if (buildSkillRegex(s).test(lower)) return true;
 
     // Fuzzy fallback for longer single-word skill names — JDs and resumes
     // disagree on spelling ("PostgresSQL" vs "PostgreSQL") far more often than
@@ -458,8 +490,7 @@ const PRACTICAL_CUE_RE = /\b(built|build|develop(?:ed|ing|er)?|implement(?:ed|in
 function hasPracticalEvidence(lowerText: string, skill: string): boolean {
   const s = dropDots(skill.toLowerCase().trim());
   if (!s) return false;
-  const escaped = s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`(?:^|[^a-z0-9+#])${escaped}(?:[^a-z0-9+#]|$)`, 'gi');
+  const re = new RegExp(buildSkillRegex(s).source, 'gi');
   let m: RegExpExecArray | null;
   while ((m = re.exec(lowerText)) !== null) {
     const windowStart = Math.max(0, m.index - 100);
@@ -527,7 +558,7 @@ function scoreEducation(text: string, requirement: string): number {
   return 40;
 }
 
-function parseLevelRange(level: string): { min: number; max: number } | null {
+export function parseLevelRange(level: string): { min: number; max: number } | null {
   const m = level.match(/\((\d+)(?:\s*[–—-]\s*(\d+))?\+?\s*yrs?\)/i);
   if (!m) return null;
   return { min: parseInt(m[1], 10), max: m[2] ? parseInt(m[2], 10) : Infinity };
@@ -536,7 +567,7 @@ function parseLevelRange(level: string): { min: number; max: number } | null {
 // When the job level doesn't include an explicit year range like "(5-8 yrs)",
 // infer a reasonable band from seniority keywords so experience scoring stays
 // meaningful instead of falling back to an uncalibrated linear formula.
-function inferLevelYears(level: string): { min: number; max: number } | null {
+export function inferLevelYears(level: string): { min: number; max: number } | null {
   if (!level) return null;
   if (/junior|entry[\s-]?level?|jr\.?\b|fresher/i.test(level)) return { min: 0, max: 2 };
   if (/\bmid[\s-]?(level)?\b|\bintermediate\b/i.test(level)) return { min: 2, max: 5 };
@@ -558,19 +589,39 @@ function scoreExperience(years: number, level: string): number {
 // A skill that's actually been put to work counts for more than one that's
 // merely named — this is where "check whether work has been done on those
 // skills" actually changes the number, not just the narrative around it.
-const PRACTICAL_WEIGHT = 1;
-const LISTED_ONLY_WEIGHT = 0.65;
+// A required skill that's never named but has a clearly related skill on the
+// resume (Node.js -> REST API) isn't a clean miss either, so it earns partial
+// credit between "missing" and "listed only".
+const PRACTICAL_SCORE = 100;
+const LISTED_ONLY_SCORE = 65;
+const RELATED_SKILL_SCORE = 35;
+const MISSING_SCORE = 0;
 
-function weightedSkillScore(required: string[], matched: string[], practical: Set<string>): number | null {
-  if (!required.length) return null;
+// Classifies every required/nice-to-have skill into one of four tiers based
+// on what the resume's own text actually supports — this is the single source
+// of truth for both the aggregate skillsMatch percentage and the per-skill
+// gap list shown on the candidate page and fed into the interview guide.
+function buildSkillGaps(lowerText: string, skills: string[], matched: string[], practical: Set<string>, required: boolean): SkillGap[] {
   const matchedLower = new Set(matched.map(m => m.toLowerCase()));
-  let sum = 0;
-  for (const skill of required) {
+  return skills.map(skill => {
     const key = skill.toLowerCase();
-    if (!matchedLower.has(key)) continue;
-    sum += practical.has(key) ? PRACTICAL_WEIGHT : LISTED_ONLY_WEIGHT;
-  }
-  return Math.round((sum / required.length) * 100);
+    if (matchedLower.has(key)) {
+      return practical.has(key)
+        ? { skill, status: 'practical', score: PRACTICAL_SCORE, required }
+        : { skill, status: 'listed', score: LISTED_ONLY_SCORE, required };
+    }
+    const related = findRelatedEvidence(lowerText, skill);
+    if (related) {
+      return { skill, status: 'related', relatedSkill: related, score: RELATED_SKILL_SCORE, required };
+    }
+    return { skill, status: 'missing', score: MISSING_SCORE, required };
+  });
+}
+
+function weightedSkillScore(gaps: SkillGap[]): number | null {
+  if (!gaps.length) return null;
+  const sum = gaps.reduce((acc, g) => acc + g.score, 0);
+  return Math.round(sum / gaps.length);
 }
 
 export function getRecommendation(score: number): string {
@@ -600,9 +651,13 @@ export function analyzeResume(text: string, filename: string, job: JobLike): Res
   const practicalSet = new Set(practicalSkills.map(s => s.toLowerCase()));
   const achievements = extractAchievements(cleaned);
 
+  const requiredGaps = buildSkillGaps(lowerCleaned, requiredSkills, matchedRequired, practicalSet, true);
+  const niceGaps = buildSkillGaps(lowerCleaned, niceToHaveSkills, matchedNice, practicalSet, false);
+  const skillGaps = [...requiredGaps, ...niceGaps];
+
   let skillsMatch = 0;
-  const requiredScore = weightedSkillScore(requiredSkills, matchedRequired, practicalSet);
-  const niceScore = weightedSkillScore(niceToHaveSkills, matchedNice, practicalSet);
+  const requiredScore = weightedSkillScore(requiredGaps);
+  const niceScore = weightedSkillScore(niceGaps);
   if (requiredScore !== null && niceScore !== null) skillsMatch = Math.round(requiredScore * 0.7 + niceScore * 0.3);
   else if (requiredScore !== null) skillsMatch = requiredScore;
   else if (niceScore !== null) skillsMatch = niceScore;
@@ -633,6 +688,7 @@ export function analyzeResume(text: string, filename: string, job: JobLike): Res
     educationMatch,
     score,
     recommendation: getRecommendation(score),
+    skillGaps,
   };
 }
 

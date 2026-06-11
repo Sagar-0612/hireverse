@@ -97,6 +97,38 @@ export function findInterviewGateStage(pipeline: PipelineStage[] = []): Pipeline
   return sortedPipeline(pipeline).find(s => /interview/i.test(s.key) || /interview/i.test(s.label));
 }
 
+// Non-interview exclusions: document review, automated tests, terminal stages.
+const INTERVIEW_EXCL_RE = /\bresume[-_\s]?screen\b|\bwritten\b|\bcoding\b|\btake[-_\s]?home\b|\bassessment\b|\btest\b|\boffer\b|\bhired\b/i;
+// Human-meeting patterns: any kind of live session with a person.
+const INTERVIEW_INCL_RE = /\binterview\b|\bpanel\b|\bbehavioral\b|\bbehavioural\b|\bculture\b|\bsystem[-_\s]?design\b|\bphone[-_\s]?screen\b|\bhr\b|\bround\b|\btechnical\b/i;
+
+export function isInterviewStage(stage: { key: string; label: string }): boolean {
+  const s = `${stage.key} ${stage.label}`;
+  if (INTERVIEW_EXCL_RE.test(s)) return false;
+  return INTERVIEW_INCL_RE.test(s);
+}
+
+export function isAssessmentStage(stage: { key: string; label: string }): boolean {
+  const s = `${stage.key} ${stage.label}`;
+  return /\bcoding\b|\btest\b|\bassessment\b|\bwritten\b|\btake[-_\s]?home\b/i.test(s);
+}
+
+// Returns true when the candidate still has at least one interview-type stage
+// at or ahead of their current position — used to decide whether "Schedule
+// Interview" should appear at all for a given candidate.
+export function hasUpcomingInterviewStage(pipeline: PipelineStage[], currentStageKey: string): boolean {
+  const sorted = sortedPipeline(pipeline);
+  const idx = sorted.findIndex(s => s.key === currentStageKey);
+  return sorted.slice(Math.max(0, idx)).some(s => isInterviewStage(s));
+}
+
+// Same for assessment-type stages (coding tests, written assessments).
+export function hasUpcomingAssessmentStage(pipeline: PipelineStage[], currentStageKey: string): boolean {
+  const sorted = sortedPipeline(pipeline);
+  const idx = sorted.findIndex(s => s.key === currentStageKey);
+  return sorted.slice(Math.max(0, idx)).some(s => isAssessmentStage(s));
+}
+
 export function isHiredStage(pipeline: PipelineStage[] = [], stageKey: string): boolean {
   const sorted = sortedPipeline(pipeline);
   if (!sorted.length) return false;

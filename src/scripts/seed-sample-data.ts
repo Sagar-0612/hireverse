@@ -162,6 +162,7 @@ async function upsertCandidate(jobDoc: any, resumeText: string, filename: string
     skills: analysis.skills,
     practicalSkills: analysis.practicalSkills,
     achievements: analysis.achievements,
+    skillGaps: analysis.skillGaps,
     resumeName: filename,
     resumeType: 'text/plain',
     resumeBase64: base64,

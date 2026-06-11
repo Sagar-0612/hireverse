@@ -170,12 +170,14 @@ const managers = await Team.find({ role: 'Hiring Manager', status: 'active' }).l
         const err = await res.json();
         errorBanner.textContent = err.error || 'Failed to create job.';
         errorBanner.style.display = 'block';
+        window.hvToast(err.error || 'Failed to create job.', 'error');
         submitBtn.disabled = false;
         submitBtn.textContent = 'Create Job';
       }
     } catch {
       errorBanner.textContent = 'Network error. Please try again.';
       errorBanner.style.display = 'block';
+      window.hvToast('Network error. Please try again.', 'error');
       submitBtn.disabled = false;
       submitBtn.textContent = 'Create Job';
     }

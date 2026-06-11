@@ -1,0 +1,445 @@
+---
+import AppLayout from "../../layouts/AppLayout.astro";
+import { connectDB } from "../../db/connection";
+import { Assessment } from "../../db/models/Assessment";
+import { Candidate } from "../../db/models/Candidate";
+import { Interview } from "../../db/models/Interview";
+import { Types } from "mongoose";
+import { findStage } from "../../lib/pipeline";
+import { generateFocusAreas, type PriorRoundSummary } from "../../lib/interviewGuide";
+
+const { id } = Astro.params;
+if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/interviews');
+
+await connectDB();
+const raw = await Assessment.findById(id).lean();
+if (!raw) return Astro.redirect('/interviews');
+
+const candidateDoc = await Candidate.findById(raw.candidateId)
+  .populate('jobId', 'title pipeline education level responsibilities')
+  .lean();
+const job = (candidateDoc?.jobId as any);
+const stage = findStage(job?.pipeline || [], raw.pipelineStage);
+
+const assessment = {
+  ...raw,
+  id: raw._id.toString(),
+  candidateName: candidateDoc?.name || 'Unknown',
+  candidateId: raw.candidateId.toString(),
+  candidateRejected: !!(candidateDoc?.rejected),
+  jobTitle: job?.title || '',
+  jobId: job?._id?.toString() || '',
+  stageLabel: stage?.label || raw.round,
+  stageColor: stage?.color || '#8b5cf6',
+};
+
+const isEvaluated = assessment.status === 'evaluated';
+const isPending = assessment.status === 'pending';
+
+const typeLabel = assessment.type === 'coding'
+  ? 'Coding Assessment'
+  : assessment.type === 'written'
+    ? 'Written Assessment'
+    : 'Take-Home Assignment';
+const dim1Label = assessment.type === 'coding' ? 'Code Quality'      : 'Writing Quality';
+const dim2Label = assessment.type === 'coding' ? 'Algorithm / Tests'  : 'Comprehension';
+const dim3Label = 'Problem Solving';
+
+// Suggested focus areas — built from the candidate's resume skill gaps and
+// any concerns raised in prior completed interviews/assessments, so the
+// evaluator knows what to probe for in this round.
+let focusAreas: { title: string; detail: string; questions?: string[] }[] = [];
+if (!isEvaluated && candidateDoc) {
+  const [priorInterviews, priorAssessments] = await Promise.all([
+    Interview.find({
+      candidateId: candidateDoc._id,
+      status: 'completed',
+      analysis: { $ne: null },
+    }, 'round analysis').lean(),
+    Assessment.find({
+      candidateId: candidateDoc._id,
+      _id: { $ne: assessment.id },
+      status: 'evaluated',
+      analysis: { $ne: null },
+    }, 'round analysis').lean(),
+  ]);
+
+  const priorRounds: PriorRoundSummary[] = [
+    ...priorInterviews.map((iv: any) => ({ round: iv.round, type: 'interview' as const, concerns: iv.analysis?.concerns || [] })),
+    ...priorAssessments.map((a: any) => ({ round: a.round, type: 'assessment' as const, concerns: a.analysis?.concerns || [] })),
+  ].filter(r => r.concerns.length > 0);
+
+  focusAreas = generateFocusAreas({
+    jobLevel: job?.level || '',
+    jobEducation: job?.education || '',
+    skillGaps: (candidateDoc as any).skillGaps || [],
+    educationMatch: (candidateDoc as any).educationMatch ?? 100,
+    experience: (candidateDoc as any).experience ?? 0,
+    priorRounds,
+    jobResponsibilities: job?.responsibilities || '',
+  });
+}
+---
+
+<AppLayout title={`${assessment.candidateName} · ${typeLabel}`} activeNav="interviews">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:28px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <a href="/interviews" class="btn btn-ghost btn-sm" style="padding:0;width:28px;height:28px;border-radius:6px;border:1px solid var(--border);">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2L4 7l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      <div>
+        <h1 style="font-size:22px;font-weight:600;color:var(--fg);letter-spacing:-0.4px;margin:0;">{typeLabel}</h1>
+        <p style="font-size:13px;color:var(--fg-mute);margin:4px 0 0;">{assessment.candidateName} · {assessment.round}</p>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;">
+      {!isEvaluated && (
+        <button id="evaluate-btn" class="btn btn-primary btn-sm">Evaluate &amp; Analyse</button>
+      )}
+      {isEvaluated && (
+        <button id="reanalyze-btn" class="btn btn-ghost btn-sm">Re-analyse</button>
+      )}
+    </div>
+  </div>
+
+  <!-- Header card -->
+  <div class="card shadow-lvl-2" style="margin-bottom:20px;display:flex;gap:24px;flex-wrap:wrap;align-items:center;padding:20px 24px;">
+    <div class="avatar" style="width:44px;height:44px;font-size:16px;">{assessment.candidateName.split(' ').map((n: string) => n[0]).join('')}</div>
+    <div style="flex:1;min-width:0;">
+      <div style="font-size:16px;font-weight:600;color:var(--fg);">{assessment.candidateName}</div>
+      <div style="font-size:13px;color:var(--fg-body);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        {assessment.jobTitle} · {assessment.round}
+        <span class="badge" style={`font-size:10px;background:${assessment.stageColor}22;color:${assessment.stageColor};border:1px solid ${assessment.stageColor}55;`}>{assessment.stageLabel}</span>
+      </div>
+    </div>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;">
+      <div style="text-align:center;">
+        <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;margin-bottom:4px;">Type</div>
+        <div style="font-size:13px;font-weight:500;color:var(--fg);">{typeLabel}</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;margin-bottom:4px;">Status</div>
+        <span class={`badge ${assessment.status === 'evaluated' ? 'badge-success' : assessment.status === 'submitted' ? 'badge-info' : 'badge-neutral'}`} style="font-size:11px;">
+          {assessment.status.charAt(0).toUpperCase() + assessment.status.slice(1)}
+        </span>
+      </div>
+      {assessment.testsTotal > 0 && (
+        <div style="text-align:center;">
+          <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;margin-bottom:4px;">Tests</div>
+          <div style="font-size:14px;font-weight:600;font-family:'JetBrains Mono',monospace;color:var(--fg);">{assessment.testsPassed}/{assessment.testsTotal}</div>
+        </div>
+      )}
+    </div>
+  </div>
+
+  {isEvaluated ? (
+    <!-- Evaluated: show scores + analysis -->
+    <div class="grid-main-aside" style="--aside-w:300px;">
+      <div>
+        <!-- Scores -->
+        <div class="card shadow-lvl-2" style="margin-bottom:20px;">
+          <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Assessment Scores</h2>
+          <div class="grid-cols-3" style="gap:16px;margin-bottom:20px;">
+            {[
+              { label: dim1Label, score: assessment.codeQualityScore },
+              { label: dim2Label, score: assessment.algorithmScore },
+              { label: dim3Label, score: assessment.problemSolvingScore },
+            ].map(({ label, score }) => (
+              <div style="text-align:center;padding:16px;background:var(--bg-soft);border-radius:8px;">
+                <div style={`font-size:28px;font-weight:700;font-family:'JetBrains Mono',monospace;letter-spacing:-1px;color:${score >= 80 ? '#10b981' : score >= 60 ? '#f59e0b' : '#ef4444'};`}>{score}</div>
+                <div style="font-size:11px;color:var(--fg-mute);margin-top:4px;">{label}</div>
+              </div>
+            ))}
+          </div>
+          <div style="padding-top:16px;border-top:1px solid var(--border);">
+            <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Overall</div>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div style={`font-size:36px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${assessment.overallScore >= 80 ? '#10b981' : assessment.overallScore >= 60 ? '#f59e0b' : '#ef4444'};`}>{assessment.overallScore}</div>
+              <div>
+                <div style="font-size:15px;font-weight:500;color:var(--fg);">{assessment.recommendation}</div>
+                <div style="font-size:12px;color:var(--fg-mute);">AI recommendation</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI Analysis -->
+        {assessment.analysis && (
+          <div class="card shadow-lvl-2" style="margin-bottom:20px;">
+            <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">AI Analysis</h2>
+            {assessment.analysis.strengths.length > 0 && (
+              <div style="margin-bottom:16px;">
+                <div style="font-size:12px;font-weight:600;color:#10b981;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.04em;">Strengths</div>
+                <ul style="margin:0;padding-left:16px;display:flex;flex-direction:column;gap:4px;">
+                  {assessment.analysis.strengths.map((s: string) => <li style="font-size:13px;color:var(--fg-body);">{s}</li>)}
+                </ul>
+              </div>
+            )}
+            {assessment.analysis.concerns.length > 0 && (
+              <div style="margin-bottom:16px;">
+                <div style="font-size:12px;font-weight:600;color:#ef4444;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.04em;">Concerns</div>
+                <ul style="margin:0;padding-left:16px;display:flex;flex-direction:column;gap:4px;">
+                  {assessment.analysis.concerns.map((c: string) => <li style="font-size:13px;color:var(--fg-body);">{c}</li>)}
+                </ul>
+              </div>
+            )}
+            <div style="padding-top:16px;border-top:1px solid var(--border);">
+              <div style="font-size:12px;font-weight:600;color:var(--fg-mute);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.04em;">Reasoning</div>
+              <p style="font-size:13px;color:var(--fg-body);line-height:1.6;margin:0;">{assessment.analysis.reasoning}</p>
+            </div>
+          </div>
+        )}
+
+        <!-- Evaluator Notes -->
+        <div class="card shadow-lvl-2" style="margin-bottom:20px;">
+          <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Evaluator Notes</h2>
+          {assessment.evaluatorNotes ? (
+            <p style="font-size:13px;color:var(--fg-body);white-space:pre-wrap;margin:0;">{assessment.evaluatorNotes}</p>
+          ) : (
+            <p style="color:var(--fg-mute);font-size:13px;margin:0;">No evaluator notes recorded.</p>
+          )}
+          {assessment.submission && (
+            <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+              <div style="font-size:12px;font-weight:600;color:var(--fg-mute);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.04em;">Submission</div>
+              <details>
+                <summary style="font-size:13px;color:var(--fg-body);cursor:pointer;">View submission</summary>
+                <pre style="font-size:12px;font-family:'JetBrains Mono',monospace;white-space:pre-wrap;word-break:break-word;background:var(--bg-soft);padding:12px;border-radius:6px;margin-top:8px;max-height:400px;overflow-y:auto;">{assessment.submission}</pre>
+              </details>
+            </div>
+          )}
+          {assessment.summary && (
+            <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+              <div style="font-size:12px;color:var(--fg-mute);">{assessment.summary}</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <!-- Sidebar -->
+      <div>
+        <div class="card shadow-lvl-2" style="margin-bottom:16px;">
+          <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Verdict</h3>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+            <div style={`width:10px;height:10px;border-radius:50%;background:${assessment.analysis?.decision === 'advance' ? '#10b981' : '#ef4444'};flex-shrink:0;`}></div>
+            <span style="font-size:14px;font-weight:500;color:var(--fg);">{assessment.analysis?.decision === 'advance' ? 'Advance' : 'Hold'}</span>
+          </div>
+          <p style="font-size:12px;color:var(--fg-mute);margin:0;">
+            {assessment.candidateRejected
+              ? `${assessment.candidateName} has since been rejected.`
+              : assessment.analysis?.decision === 'advance'
+                ? 'Signal is strong enough to move this candidate forward.'
+                : 'Consider reviewing concerns before advancing.'}
+          </p>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px;">
+            {!assessment.candidateRejected && (
+              <a href={`/interviews/schedule?candidate=${assessment.candidateId}`} class="btn btn-primary" style="width:100%;border-radius:6px;">Schedule Interview</a>
+            )}
+            <a href={`/candidates/${assessment.candidateId}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">View Candidate</a>
+          </div>
+        </div>
+        {assessment.analysis?.analyzedAt && (
+          <div style="font-size:11px;color:var(--fg-mute);text-align:center;">
+            Analysed {new Date(assessment.analysis.analyzedAt).toLocaleString()}
+          </div>
+        )}
+      </div>
+    </div>
+  ) : (
+    <!-- Pending/Submitted: show instructions + submission form hint -->
+    <div class="grid-main-aside" style="--aside-w:300px;">
+      <div>
+        {focusAreas.length > 0 && (
+          <div class="card shadow-lvl-2" style="margin-bottom:20px;">
+            <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Suggested Focus Areas</h2>
+            <p style="font-size:12px;color:var(--fg-mute);margin:0 0 14px;">Based on {assessment.candidateName}'s resume gaps and prior-round concerns — worth weighting the assessment or evaluation toward these.</p>
+            <div style="display:flex;flex-direction:column;gap:10px;max-height:480px;overflow-y:auto;padding-right:6px;">
+              {focusAreas.map(fa => (
+                <div style="font-size:13px;line-height:1.5;">
+                  <div style="font-weight:600;color:var(--fg);">{fa.title}</div>
+                  <div style="color:var(--fg-body);">{fa.detail}</div>
+                  {fa.questions && fa.questions.length > 0 && (
+                    <ul style="margin:6px 0 0;padding-left:18px;color:var(--fg-mute);">
+                      {fa.questions.map(q => (
+                        <li style="margin-bottom:2px;">{q}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {assessment.instructions && (
+          <div class="card shadow-lvl-2" style="margin-bottom:20px;">
+            <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Instructions</h2>
+            <p style="font-size:13px;color:var(--fg-body);white-space:pre-wrap;margin:0;">{assessment.instructions}</p>
+          </div>
+        )}
+        <div class="card shadow-lvl-2" style="margin-bottom:20px;">
+          <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Submission</h2>
+          <textarea id="submission-input" class="input" style="height:180px;padding:10px 12px;resize:vertical;font-size:12px;font-family:'JetBrains Mono',monospace;" placeholder="Paste the candidate's code or written answer here, or a link to their submission…">{assessment.submission || ''}</textarea>
+          <div style="display:flex;gap:8px;margin-top:10px;">
+            <button id="save-submission-btn" class="btn btn-secondary btn-sm">Save Submission</button>
+            <button id="mark-submitted-btn" class="btn btn-ghost btn-sm" style={assessment.status === 'submitted' ? 'display:none;' : ''}>Mark as Submitted</button>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="card shadow-lvl-2" style="margin-bottom:16px;">
+          <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Next Step</h3>
+          <p style="font-size:13px;color:var(--fg-body);margin:0 0 14px;">
+            {assessment.status === 'submitted'
+              ? 'Submission received — ready to evaluate and analyse.'
+              : `Waiting for ${assessment.candidateName} to complete the ${typeLabel.toLowerCase()}.`}
+          </p>
+          <button id="evaluate-btn-aside" class="btn btn-primary" style="width:100%;border-radius:6px;">Evaluate &amp; Analyse</button>
+        </div>
+        <a href={`/candidates/${assessment.candidateId}`} class="btn btn-secondary" style="width:100%;border-radius:6px;display:block;text-align:center;">View Candidate</a>
+      </div>
+    </div>
+  )}
+</AppLayout>
+
+<!-- Evaluate modal -->
+<div id="evaluate-modal" style="display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;padding:20px;">
+  <div style="position:relative;z-index:1;width:560px;max-width:100%;max-height:90vh;overflow-y:auto;background:var(--surface-card,var(--surface));border-radius:12px;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+    <h2 style="font-size:18px;font-weight:600;color:var(--fg);margin:0 0 8px;">Evaluate Assessment</h2>
+    <p style="font-size:13px;color:var(--fg-mute);margin:0 0 20px;">Describe how the candidate performed — the AI analyses your notes alongside the submission and produces scores, strengths, concerns, and a move-forward recommendation. Be specific: concrete observations carry the most weight.</p>
+
+    {assessment.type === 'coding' && (
+      <div style="margin-bottom:16px;">
+        <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Test Results <span style="font-size:12px;color:var(--fg-mute);">(optional)</span></label>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <input id="tests-passed" type="number" min="0" class="input" style="width:80px;height:34px;" placeholder="0" value={assessment.testsPassed || ''} />
+          <span style="color:var(--fg-mute);font-size:13px;">of</span>
+          <input id="tests-total" type="number" min="0" class="input" style="width:80px;height:34px;" placeholder="0" value={assessment.testsTotal || ''} />
+          <span style="color:var(--fg-mute);font-size:13px;">tests passed</span>
+        </div>
+      </div>
+    )}
+
+    <div style="margin-bottom:16px;">
+      <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Submission <span style="font-size:12px;color:var(--fg-mute);">(optional — paste code / answer / link)</span></label>
+      <textarea id="eval-submission" class="input" style="height:100px;font-size:12px;font-family:'JetBrains Mono',monospace;" placeholder="Paste the candidate's solution here if not already saved…">{assessment.submission || ''}</textarea>
+    </div>
+
+    <div style="margin-bottom:20px;">
+      <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Your Evaluation Notes <span style="color:#ee0000;">*</span></label>
+      <textarea id="eval-notes" class="input" style="height:150px;" placeholder={assessment.type === 'coding'
+        ? 'How was the code quality? Was the algorithm efficient? Did they handle edge cases? Was the solution correct? Would you move them forward — and why?'
+        : 'Did they understand the question? Was the answer correct and well-structured? Did they demonstrate analytical thinking? Would you move them forward?'}></textarea>
+      <p id="eval-notes-hint" style="font-size:11px;color:var(--fg-mute);margin:4px 0 0;"></p>
+    </div>
+
+    <div id="eval-error" style="display:none;font-size:13px;color:#ef4444;margin-bottom:12px;"></div>
+
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button id="eval-cancel" class="btn btn-secondary">Cancel</button>
+      <button id="eval-save" class="btn btn-primary">Analyse &amp; Evaluate</button>
+    </div>
+  </div>
+</div>
+
+<script define:vars={{ assessmentId: assessment.id, assessmentType: assessment.type }}>
+  const modal = document.getElementById('evaluate-modal');
+
+  function openModal() {
+    modal.style.display = 'flex';
+    document.getElementById('eval-notes')?.focus();
+  }
+  function closeModal() { modal.style.display = 'none'; }
+
+  document.getElementById('evaluate-btn')?.addEventListener('click', openModal);
+  document.getElementById('evaluate-btn-aside')?.addEventListener('click', openModal);
+  document.getElementById('eval-cancel')?.addEventListener('click', closeModal);
+  modal?.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+
+  // Character hint on notes
+  const evalNotes = document.getElementById('eval-notes');
+  const evalHint = document.getElementById('eval-notes-hint');
+  evalNotes?.addEventListener('input', () => {
+    const len = evalNotes.value.trim().length;
+    if (evalHint) evalHint.textContent = len < 10 ? `${10 - len} more character${10 - len === 1 ? '' : 's'} needed` : '';
+  });
+
+  // Save submission (non-evaluate)
+  document.getElementById('save-submission-btn')?.addEventListener('click', async () => {
+    const submission = document.getElementById('submission-input')?.value || '';
+    const res = await fetch(`/api/assessments/${assessmentId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ submission }),
+    });
+    if (res.ok) { window.hvToast('Submission saved', 'success'); }
+    else { window.hvToast('Failed to save submission', 'error'); }
+  });
+
+  document.getElementById('mark-submitted-btn')?.addEventListener('click', async () => {
+    const submission = document.getElementById('submission-input')?.value || '';
+    const res = await fetch(`/api/assessments/${assessmentId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ submission, status: 'submitted' }),
+    });
+    if (res.ok) { window.location.reload(); }
+    else { window.hvToast('Failed to update status', 'error'); }
+  });
+
+  // Evaluate submit
+  document.getElementById('eval-save')?.addEventListener('click', async () => {
+    const evalNotesEl = document.getElementById('eval-notes');
+    const evalError = document.getElementById('eval-error');
+    const evalSave = document.getElementById('eval-save');
+
+    const notes = evalNotesEl?.value.trim() || '';
+    if (notes.length < 10) {
+      evalError.textContent = 'Add a bit more detail (at least a sentence) before analysing.';
+      evalError.style.display = 'block';
+      return;
+    }
+    evalError.style.display = 'none';
+    evalSave.disabled = true;
+    evalSave.textContent = 'Analysing…';
+
+    const body = {
+      status: 'evaluated',
+      evaluatorNotes: notes,
+      submission: document.getElementById('eval-submission')?.value.trim() || '',
+    };
+    if (assessmentType === 'coding') {
+      body.testsPassed = parseInt(document.getElementById('tests-passed')?.value || '0', 10) || 0;
+      body.testsTotal  = parseInt(document.getElementById('tests-total')?.value  || '0', 10) || 0;
+    }
+
+    const res = await fetch(`/api/assessments/${assessmentId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      window.location.reload();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      evalError.textContent = err.error || 'Failed to evaluate assessment.';
+      evalError.style.display = 'block';
+      evalSave.disabled = false;
+      evalSave.textContent = 'Analyse & Evaluate';
+    }
+  });
+
+  // Re-analyse
+  document.getElementById('reanalyze-btn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('reanalyze-btn');
+    btn.disabled = true;
+    btn.textContent = 'Re-analysing…';
+    const res = await fetch(`/api/assessments/${assessmentId}/reanalyze`, { method: 'POST' });
+    if (res.ok) {
+      window.location.reload();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      window.hvToast(err.error || 'Re-analysis failed', 'error');
+      btn.disabled = false;
+      btn.textContent = 'Re-analyse';
+    }
+  });
+</script>

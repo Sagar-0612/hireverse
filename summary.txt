@@ -1,0 +1,529 @@
+HireVerse — ATS Reliability/UX Fixes (Rounds 1, 2 & 3)
+========================================================
+All changes are deterministic / heuristic (no LLM, no external AI API),
+consistent with the existing resumeAnalysis.ts / interviewAnalysis.ts /
+assessmentAnalysis.ts style.
+
+
+1. JOB TITLE DUPLICATE DETECTION
+---------------------------------
+Problem: Two jobs could be created with the same (or whitespace/case-different)
+title with no warning.
+
+Changes:
+- New src/lib/text.ts: normalizeTitle(s) — trims, collapses internal
+  whitespace, and lowercases a title for comparison.
+- src/pages/api/jobs/index.ts (POST): before creating a job, all existing job
+  titles are normalized and compared against the incoming title (case- and
+  whitespace-insensitive, across ALL jobs regardless of status). A match
+  returns 409 with: 'A job titled "<title>" already exists. Choose a
+  different title.'
+- src/pages/api/jobs/[id].ts (PUT): same check when a title is edited,
+  excluding the job's own _id.
+- src/pages/jobs/new.astro: on failure, the error is now also shown as a
+  toast (window.hvToast) in addition to the existing error banner.
+
+
+2. GAP-FOCUSED, ACCUMULATING INTERVIEW GUIDE — WITH REAL QUESTIONS
+-------------------------------------------------------------------
+Problem: The "Interview Guide" was a generic 6-step checklist, identical for
+every candidate and every round, and (round 1) only described gaps without
+giving interviewers anything concrete to ask.
+
+Changes:
+- src/lib/interviewGuide.ts:
+  - GuideStep now has an optional `questions: string[]` field — concrete,
+    ready-to-ask interview questions, not just a description of the gap.
+  - generateFocusAreas(input) builds focus areas from:
+      * the candidate's skillGaps (missing / related / listed skills, ordered
+        by severity, capped at 5). Each gets 2 tailored questions:
+          - missing:  "Have you worked with <skill> in any capacity — even a
+                       small project, course, or personal experiment?" /
+                       "If you had to start using <skill> on the job next
+                       week, how would you ramp up?"
+          - related:  "Your resume highlights <relatedSkill> — can you walk
+                       me through how that work involved (or could extend
+                       to) <skill>?" / "What's the most complex thing you've
+                       done with <skill> specifically, separate from
+                       <relatedSkill>?"
+          - listed:   "You've listed <skill> on your resume — talk me
+                       through a specific project where you used it and what
+                       your role was." / "What's the trickiest problem you've
+                       solved using <skill>?"
+      * an education-gap item (with 2 questions) if educationMatch < 65
+      * an experience-gap item (with 2 questions) if years of experience fall
+        below the job level's expected range (parseLevelRange /
+        inferLevelYears, exported from resumeAnalysis.ts)
+      * "carry-forward" items — concerns from any prior completed
+        interview/assessment's analysis.concerns, each with a direct
+        follow-up question quoting the original concern, so round 2's guide
+        includes round 1's unresolved concerns, etc.
+  - generateInterviewGuide(input) wraps generateFocusAreas with a standard
+    intro/behavioral/Q&A/wrap-up structure (behavioral round also now ships
+    with 2 real questions), used for the numbered "Interview Guide" steps.
+- src/pages/interviews/[id].astro:
+  - jobId populate includes requiredSkills, niceToHaveSkills, education,
+    level.
+  - candidate fetch includes skillGaps, score, skillsMatch, educationMatch,
+    experience, recommendation.
+  - Fetches all other completed interviews (with analysis) and evaluated
+    assessments (with analysis) for the candidate.
+  - The hardcoded 6-step guide is replaced with generateInterviewGuide()
+    output: each numbered step shows a bold title, a detail line, and (when
+    present) a bulleted list of the actual questions to ask.
+- src/pages/assessments/[id].astro: for pending/submitted assessments, the
+  "Suggested Focus Areas" card (using generateFocusAreas, same data sources)
+  now also renders each focus area's question list.
+
+
+3. SCHEDULING NOTIFICATIONS (EMAIL + WHATSAPP)
+-------------------------------------------------
+Problem: Scheduling an interview/assessment sent no notifications to anyone.
+
+Changes:
+- src/lib/notifications.ts:
+  - sendEmail({to, subject, text}) — uses nodemailer with SMTP_HOST/PORT/
+    USER/PASS/FROM env vars. If SMTP_HOST is unset, logs
+    "[email:not-configured] ..." to the console and returns {sent:false} —
+    never throws.
+  - sendWhatsApp({to, message}) — uses Twilio's REST API directly via fetch
+    (TWILIO_ACCOUNT_SID/AUTH_TOKEN/WHATSAPP_FROM env vars, no SDK needed). If
+    unset, logs "[whatsapp:not-configured] ..." and returns {sent:false}.
+- src/pages/api/interviews/index.ts (POST): after the interview is created
+  and the scheduling activity is logged (non-blocking try/catch):
+  - Candidate gets an email AND a WhatsApp message with round, job, date,
+    time, duration, format, and interviewer.
+  - Interviewer (looked up via Team.findOne({name: interviewer})) gets an
+    email with the candidate's name and the same details.
+  - A new ActivityLog entry ("interview_notifications_sent") records what was
+    actually sent vs. skipped (missing contact info / unconfigured).
+- src/pages/api/assessments/index.ts (POST): same pattern — candidate gets an
+  email + WhatsApp message announcing the new assessment (with instructions
+  if provided), logged the same way.
+- package.json: added "nodemailer" (dependency) and "@types/nodemailer"
+  (devDependency); also added @astrojs/check + typescript (required by
+  `astro check`, were missing from devDependencies).
+- .env.example: documented optional SMTP_* and TWILIO_* env vars, with notes
+  that the system works (log-only) without them.
+
+STATUS — VERIFIED WORKING AS DESIGNED:
+This codebase's .env currently has only MONGODB_URI set — no SMTP_HOST or
+TWILIO_* credentials. We confirmed (via direct DB inspection) that scheduling
+"Technical Round 1" for Sagar Pawar correctly ran the notification code path
+and logged an ActivityLog entry: "No notifications could be sent for
+'Technical Round 1' (Sagar Pawar) — missing contact info or notification
+config". The candidate's email/phone WERE present, so the only thing
+preventing real delivery is the absence of SMTP/Twilio configuration. To
+actually send emails and WhatsApp messages, add the following to .env:
+  SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
+  TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM
+Once set, sendEmail/sendWhatsApp automatically switch from logging to actually
+sending — no further code changes needed.
+
+
+4. MEANINGFUL SCORE COLORS
+-----------------------------
+Problem: In the Interviews "Completed" tab, Communication/Technical/
+Confidence scores used fixed badge colors (e.g. Technical was always green)
+regardless of the actual number — a score of 5 still showed green.
+
+Changes:
+- New src/lib/scoreColor.ts:
+  - scoreColorHex(score) — '#10b981' (>=70), '#f59e0b' (40-69), '#ef4444' (<40)
+  - scoreBadgeClass(score) — 'badge-success' / 'badge-warning' / 'badge-error'
+    on the same thresholds.
+- src/pages/interviews/index.astro: Completed tab's comm/tech/confidence
+  badges now use scoreBadgeClass(score) instead of fixed badge-info/
+  badge-success/badge-violet.
+- src/pages/interviews/[id].astro: the Communication/Technical/Confidence
+  stat cards now color both the score text and the progress bar via
+  scoreColorHex(score).
+
+
+5. RELATED-SKILL PARTIAL CREDIT (RESUME SCORING) — INCLUDING PLURAL FIX
+--------------------------------------------------------------------------
+Problem: A required skill not literally found in the resume scored 0, even
+when a clearly related skill was present (e.g. resume shows "Node.js" but the
+job requires "REST API" — no credit given). Worked the same for non-IT roles.
+
+Round-1 implementation:
+- New src/lib/skillRelations.ts:
+  - SKILL_RELATIONS: a curated lowercase skill -> related-skills lexicon
+    covering common IT domains (web/JS, databases, devops/cloud, python/data,
+    Java, .NET/PHP/Ruby, mobile, QA, project management) and non-IT domains
+    (sales/marketing, accounting, HR, customer support, design).
+  - findRelatedEvidence(text, skill) — returns the first related skill found
+    in the resume text (word-boundary matching), or null.
+- src/lib/resumeAnalysis.ts:
+  - New SkillGap type: { skill, status: 'practical'|'listed'|'related'|
+    'missing', relatedSkill?, score }.
+  - New scoring tiers: practical=100, listed=65, related=35 (NEW —
+    previously 0), missing=0.
+  - buildSkillGaps() classifies every required + nice-to-have skill into one
+    of these 4 tiers (related uses findRelatedEvidence).
+  - skillsMatch is now the weighted average of these per-skill scores
+    (required skills weighted 70%, nice-to-have 30%).
+  - analyzeResume() now returns skillGaps: SkillGap[].
+  - parseLevelRange and inferLevelYears are now exported (reused by
+    interviewGuide.ts for the experience-gap check).
+- src/db/models/Candidate.ts: new ISkillGap subdocument schema and
+  skillGaps: ISkillGap[] field on the Candidate model.
+- src/pages/api/candidates/upload.ts, src/scripts/seed-sample-data.ts:
+  persist skillGaps from analyzeResume() onto the candidate document (new
+  candidates and re-applications).
+- src/pages/candidates/[id].astro: the per-skill match display reads from
+  candidate.skillGaps, showing 4 distinct levels:
+    - "Used in a project or role — not just listed" (practical, ~100%)
+    - "Listed, but no project/work evidence found" (listed, ~65%)
+    - 'Not directly listed, but "<relatedSkill>" suggests working knowledge'
+      (related, ~35%, amber bar)
+    - "Not found on resume" (missing, 0%, red bar)
+
+Round-2 bug fix — plural/singular skill-name mismatch:
+- Found via testing: a job requiring "REST APIs" (plural) scored the related
+  Node.js evidence as 0, because SKILL_RELATIONS' lexicon key is the singular
+  "rest api" and normSkill() only lowercases + strips dots (no plural
+  handling), so SKILL_RELATIONS['rest apis'] was undefined.
+- Fixed in src/lib/skillRelations.ts:
+  - findRelatedEvidence() now falls back to a singularized lexicon key:
+    SKILL_RELATIONS[key] || SKILL_RELATIONS[key.replace(/s$/, '')].
+  - appearsInText() now tolerates a trailing-"s" mismatch in either direction
+    (only for terms >= 5 chars, to avoid false positives like "css" -> "cs").
+- Fixed in src/lib/resumeAnalysis.ts:
+  - New exported buildSkillRegex(skill) — shared word-boundary regex builder
+    with the same trailing-"s" tolerance, used by matchSkills() and
+    hasPracticalEvidence() so "REST API" <-> "REST APIs" match consistently
+    everywhere skill text is matched.
+- Verified: candidate Sagar Pawar (job "Full Stack Developer", which requires
+  "REST APIs") now shows skillGaps: { skill: "REST APIs", status: "related",
+  relatedSkill: "nodejs", score: 35 } — partial credit is correctly applied.
+
+
+6. EXISTING DATA BACKFILL
+----------------------------
+Problem: Candidates created/analyzed before this round had no skillGaps field
+and stale scores computed under the old (binary skill-match, no plural
+tolerance) logic.
+
+Changes:
+- New src/scripts/backfill-skill-gaps.ts — one-off migration that re-runs
+  extractResumeText() + analyzeResume() for every candidate with a stored
+  resume, against their parent job's *current* requiredSkills/
+  niceToHaveSkills/education/level, and overwrites score, experience,
+  skillsMatch, educationMatch, recommendation, skills, practicalSkills,
+  achievements, and skillGaps.
+  Run with: node --experimental-strip-types src/scripts/backfill-skill-gaps.ts
+- src/lib/resumeAnalysis.ts: changed `import { findRelatedEvidence } from
+  './skillRelations'` to `'./skillRelations.ts'` (explicit extension) so this
+  script — and any other direct-node script importing resumeAnalysis — can
+  resolve the module under Node's --experimental-strip-types loader. No
+  effect on the Astro/Vite build (explicit .ts extensions resolve there too).
+- Ran the migration against the local database: all 13 existing candidates
+  were updated with skillGaps and recomputed scores (verified via direct
+  MongoDB inspection — no errors, no skipped records).
+
+
+VERIFICATION (Rounds 1 & 2)
+------------------------------
+- `npm install --legacy-peer-deps` (pre-existing peer-dep conflict between
+  @astrojs/tailwind@6 and astro@6, unrelated to this work; nodemailer and
+  @astrojs/check/typescript were added successfully).
+- `npx astro check` — no new errors introduced by any of the above changes
+  (all reported errors/warnings are pre-existing and unrelated, e.g.
+  word-extractor missing types, window.hvToast/hvConfirm globals not
+  declared, candidates/index.astro DOM typing, inline-script directives).
+- `npx astro build` — production build completes successfully.
+- Direct MongoDB inspection confirmed: the REST APIs related-skill fix is
+  applied correctly for the test candidate, all 13 candidates now carry
+  skillGaps, and the notification code path runs end-to-end and logs its
+  outcome (no SMTP/Twilio configured, so log-only — by design).
+
+
+ROUND 3 — DUPLICATE-STAGE PREVENTION, TRUTHFUL/INTELLIGENT GUIDES, POPUP FIX, JOURNEY INSIGHTS
+=================================================================================================
+
+7. NO DUPLICATE INTERVIEW/ASSESSMENT FOR THE SAME PIPELINE STAGE
+--------------------------------------------------------------------
+Problem: Aswani Soni had TWO "Technical Round 1" interviews scheduled against
+a job whose pipeline only has one technical-interview stage — nothing
+prevented scheduling a second round/assessment for a stage the candidate had
+already been scheduled or evaluated for, anywhere in the platform.
+
+Changes:
+- src/pages/api/interviews/index.ts (POST): before Interview.create(), looks
+  up any existing Interview for this candidate + the target pipeline stage
+  with status 'scheduled' or 'completed'. If found, returns 409 with a
+  message naming the existing round/date and explaining a candidate cannot be
+  interviewed twice for the same pipeline stage (a real "round 2" belongs to
+  the *next* pipeline stage, not a repeat of the same one).
+- src/pages/api/assessments/index.ts (POST): same check — any existing
+  Assessment (any status: pending/submitted/evaluated) for this candidate +
+  pipeline stage blocks creating a new one, with a 409 explaining why.
+- src/pages/interviews/schedule.astro: fetches all active (scheduled/
+  completed) interviews up front, builds a per-candidate "already taken
+  stages" set, and filters each candidate's selectable interview stages to
+  exclude those — candidates with zero remaining interview stages are removed
+  from the picker entirely.
+- src/pages/assessments/create.astro: same pattern using all existing
+  Assessment records (any status) and assessment-type stages.
+- Data cleanup: the pre-existing duplicate interview for Aswani Soni
+  (6a2a270139e1a16ff8520e50, a second "Technical Round 1") was marked
+  status: 'cancelled' with an explanatory note, and an ActivityLog entry was
+  added documenting the cleanup.
+
+
+8. REQUIRED VS NICE-TO-HAVE FRAMING FOR SKILL GAPS (NO MORE FALSE "REQUIRED" CLAIMS)
+----------------------------------------------------------------------------------------
+Problem: Sagar Pawar's interview guide said Python "is required for the role"
+even though the Full Stack Developer job he applied to lists Python under
+niceToHaveSkills, not requiredSkills — a false claim that could mislead an
+interviewer into over-weighting a non-required gap.
+
+Changes:
+- src/lib/resumeAnalysis.ts: SkillGap now carries `required: boolean` (true
+  for the job's requiredSkills, false for niceToHaveSkills). buildSkillGaps()
+  takes a `required` flag and stamps it on every gap it produces; both the
+  required-skills pass and the nice-to-have-skills pass in analyzeResume()
+  pass the correct flag.
+- src/db/models/Candidate.ts: ISkillGap / SkillGapSchema gained
+  `required: boolean` (schema default true for legacy documents).
+- src/pages/candidates/[id].astro: the per-skill match label now appends
+  " (nice-to-have for this role)" when gap.required is false, for the
+  listed/related/missing statuses.
+- src/lib/interviewGuide.ts: skillGapStep() now branches on gap.required for
+  every non-practical status:
+    - missing + required:    "required, not found on resume" / "This is
+                              required for the role but doesn't appear..."
+    - missing + nice-to-have: "(nice-to-have) — not found on resume" / "...
+                              not a blocker, but worth a quick check if time
+                              allows."
+    - related/listed get the equivalent "(nice-to-have)" framing in their
+      titles/details when gap.required is false.
+  This directly fixes the Sagar Pawar/Python case: Python now correctly shows
+  as a nice-to-have gap, never as "required for the role".
+
+
+9. INTERVIEW GUIDE IS NEVER GENERIC — EVEN FOR STRONG/NO-GAP CANDIDATES
+-----------------------------------------------------------------------------
+Problem: Aswani Soni's resume matched 100% of both required and nice-to-have
+skills (every skillGap had status: 'practical'), so generateFocusAreas()'s
+gap filter (status !== 'practical') produced zero focus areas — leaving only
+the generic intro/behavioral/Q&A/wrap-up steps, identical to every other
+candidate.
+
+Changes:
+- src/lib/interviewGuide.ts: new practicalVerificationStep(gap) — for a skill
+  the candidate already has hands-on evidence for, generates a "verify
+  hands-on depth" focus area with two probing questions (e.g. "Walk me
+  through the most complex thing you've built or solved using <skill>... what
+  tradeoffs did you make?" / "What's a mistake, bug, or limitation you've run
+  into with <skill>, and how did you resolve it?"), noting whether the skill
+  is required or nice-to-have for this role.
+- generateFocusAreas(): focusGaps are now sorted by (severity, then
+  required-first within the same severity). If focusGaps has fewer than
+  MAX_SKILL_FOCUS_AREAS (5), the remaining slots are filled with
+  practicalVerificationStep() for the candidate's best-matched practical
+  skills (required skills first) — so the guide is always specific to this
+  candidate + this job, never just the generic checklist, regardless of how
+  strong the resume is.
+
+
+10. "EVALUATE ASSESSMENT" POPUP — FIXED PERMANENTLY-VISIBLE OVERLAY
+-------------------------------------------------------------------------
+Problem: On the assessment detail page, the "Evaluate Assessment" modal
+("coding feedback" popup) was not "clearly visible" — in fact the underlying
+page was obscured because the modal was rendering on top of it at all times.
+
+Root cause: src/pages/assessments/[id].astro line 303 had a duplicated
+`display` property in one inline style attribute:
+  style="display:none; ... ; display:flex; ..."
+In CSS, the later declaration wins for duplicate properties within the same
+style attribute, so the modal's actual initial display was `flex` — fixed,
+full-viewport, semi-transparent overlay — covering the page on every load,
+not just when "Evaluate" was clicked.
+
+Fix: removed the duplicate `display:flex`, leaving `display:none` as the
+modal's initial state (JS openModal()/closeModal() toggle it as intended).
+Checked the rest of src/pages/**/*.astro for the same duplicate-display
+pattern — this was the only occurrence.
+
+
+11. CANDIDATE JOURNEY — RICHER PER-STAGE PERFORMANCE INSIGHTS
+-------------------------------------------------------------------
+Problem: The journey timeline showed only a bare Tech/Comm/Conf score line for
+interviews and nothing for assessments — no sense of *why* a candidate scored
+that way, or whether they were recommended to advance.
+
+Changes (src/pages/candidates/[id]/journey.astro):
+- Now also fetches all Assessment records for the candidate, grouped by
+  pipeline stage (mirroring the existing Interview grouping).
+- Each interview card (linked to /interviews/<id>) now shows:
+    - status badge (scheduled/completed/cancelled rendered distinctly)
+    - Tech/Comm/Conf scores colored via scoreColorHex() (green/amber/red by
+      actual value, not a fixed color)
+    - if analysis exists: an "advance"/"hold" recommendation badge, a
+      Strengths line, a Concerns line, and the AI's reasoning text
+- New assessment cards (linked to /assessments/<id>) per stage, showing:
+    - status badge, type, and tests-passed ratio (for coding assessments)
+    - Overall/Code Quality/Algorithm/Problem Solving scores colored via
+      scoreColorHex() when evaluated
+    - the same analysis block (recommendation badge, strengths, concerns,
+      reasoning) when the assessment has been evaluated
+This gives a full per-stage performance picture directly in the journey,
+without needing to click into each interview/assessment individually.
+
+
+12. RE-RUN SKILL-GAP BACKFILL FOR THE NEW `required` FIELD
+------------------------------------------------------------------
+Re-ran `node --experimental-strip-types src/scripts/backfill-skill-gaps.ts`
+now that SkillGap carries `required: boolean` — all 13 existing candidates
+were recomputed (score/skillsMatch/educationMatch/skillGaps), so every
+skillGap on file now has the correct required/nice-to-have flag (e.g. Sagar
+Pawar's Python gap is now correctly `required: false`).
+
+
+13. TOPIC-SPECIFIC, LEVEL-CALIBRATED INTERVIEW QUESTIONS (NOT TEMPLATED)
+------------------------------------------------------------------------------
+Problem: Even after Round 3's fixes, every gap/verification question was a
+single sentence template with the skill name swapped in (e.g. "Walk me
+through the most complex thing you've built using <skill>...") — same
+phrasing for Node.js, Python, Excel, etc., and the same questions regardless
+of whether the candidate has 1 year or 8 years of experience.
+
+Changes:
+- New src/lib/skillQuestions.ts:
+  - Curated question bank for ~36 common skills (JS/TS, Node/Express, React/
+    Redux/Angular/Vue/Next.js, HTML/CSS, REST/GraphQL, SQL/MongoDB/Redis,
+    Docker/Kubernetes/AWS/Git/Linux, Python/Django/Flask/Pandas/NumPy/ML,
+    Java/Spring, C#/.NET, PHP/Laravel, Selenium, Excel/Data Analysis), plus
+    aliases (e.g. "Spring Boot" -> spring, "Postgres"/"MySQL" -> sql,
+    "REST APIs" -> rest api via plural-stripping).
+  - Each skill has a 5-question ladder ordered foundational -> advanced.
+    levelFromExperience(years) buckets a candidate as junior (<2y), mid
+    (2-5y), or senior (5y+); getSkillQuestions(skill, level, count) returns a
+    3-question sliding window over that ladder (junior -> Q1-3, mid -> Q2-4,
+    senior -> Q3-5) — same topic, harder questions for more experienced
+    candidates.
+  - Skills with no curated entry fall back to level-appropriate but
+    skill-named generic questions (still varies junior/mid/senior).
+- src/lib/interviewGuide.ts:
+  - skillGapStep() and practicalVerificationStep() now take the candidate's
+    CandidateLevel (derived from input.experience) and append 2 topic-specific
+    questions from getSkillQuestions() to the existing bridging question —
+    2-3 concrete questions per focus area instead of 1-2 generic ones.
+  - For status 'missing' (skill never mentioned on resume), topic questions
+    are pulled at 'junior' level regardless of overall experience — testing
+    foundational/transferable understanding rather than assuming depth the
+    candidate hasn't demonstrated. 'related'/'listed'/practical-verification
+    use the candidate's actual experience level.
+
+
+14. GAP PRIORITY ORDER: REQUIRED-SKILL GAPS FIRST, THEN NICE-TO-HAVE — AND DEEPER PER-GAP QUESTION SETS
+-----------------------------------------------------------------------------------------------------------
+Problem: Focus areas were sorted by gap severity first (missing > related >
+listed) and required-vs-nice-to-have only as a tiebreaker — so a missing
+nice-to-have skill (e.g. Redis) could outrank a listed-but-unverified
+*required* skill (e.g. MongoDB), pushing the questions that actually matter
+for this role further down (or off) the guide. Each gap also only carried 2
+topic-specific questions (3 total with the bridging question).
+
+Changes (src/lib/interviewGuide.ts):
+- generateFocusAreas() now sorts focus gaps by required-first as the primary
+  key, with severity (missing > related > listed) as the tiebreaker within
+  each group — so every required-skill gap/loophole is addressed before any
+  nice-to-have gap, and the most severe required gaps come first.
+- skillGapStep() now pulls 3 topic-specific questions from
+  getSkillQuestions() (was 2), giving 4 total questions per gap (1 bridging +
+  3 topic, level-calibrated as before) — enough to properly probe a gap
+  without being generic.
+- `npx astro check` — no new errors/warnings introduced by any Round-3 change
+  (all remaining errors/warnings are the same pre-existing, unrelated ones
+  from Rounds 1-2: word-extractor types, window.hvToast/hvConfirm globals,
+  inline-script directives).
+- `npx astro build` — production build completes successfully.
+- Backfill script ran cleanly: "Done. Updated 13, skipped 0."
+- Spot-checked src/lib/skillQuestions.ts directly: senior-level Node.js,
+  junior-level REST APIs, and a fallback (Salesforce, not in the bank) all
+  return correctly leveled, topic-relevant questions.
+
+
+15. ELIMINATE GENERIC TEMPLATE QUESTIONS, REQUIRED-SKILL-FIRST GUIDE EVEN WHEN THERE ARE NO REQUIRED GAPS, JD-RESPONSIBILITY TIE-INS, AND SCROLLABLE GUIDES (10-15+ QUESTIONS)
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Problem (reported with the "Muskan" Junior Frontend Developer candidate):
+- Every focus area still opened with one hand-written "bridging" sentence
+  ("Walk me through the most complex thing you've built or solved using X",
+  "Have you worked with X...", "You've listed X on your resume...", "Your
+  resume highlights X...") before the topic-specific questions — these read
+  as generic templates regardless of the skill.
+- The required-first sort from item 14 only reordered *gaps*. A candidate
+  whose required skills are ALL status 'practical' (no gaps at all, e.g.
+  Muskan: React/JavaScript/HTML/CSS/Git all practical) still ended up with a
+  focus list that was 100% nice-to-have gaps (Testing/TypeScript/Redux/
+  Next.js), because there was nothing required in the gap list to sort to
+  the front.
+- "Suggested Focus Areas" / "Interview Guide" lists had no scroll container,
+  so longer lists pushed the rest of the page down awkwardly.
+- "Testing" (a common nice-to-have/JD skill with no curated bank entry)
+  fell back to skill-named-but-generic questions.
+
+Changes:
+- src/lib/skillQuestions.ts:
+  - Expanded every skill's question ladder from 5 -> 6 questions (added one
+    deeper, design/debugging/architecture-level question per skill, e.g.
+    "How would you design a Node service to handle thousands of concurrent
+    connections?", "How would you find which commit introduced a bug without
+    manually checking each one?").
+  - Added a new "testing" entry (unit/integration/e2e testing, mocking,
+    async test handling, coverage strategy) plus aliases (unit testing,
+    jest, mocha, chai, cypress, vitest, pytest, junit, tdd, qa testing).
+  - Expanded fallbackQuestions() (for skills with no curated bank entry) from
+    3 -> 4 questions per level.
+  - getSkillQuestions(skill, level, count) windows now default to 4
+    questions: junior -> ladder[0..4), mid -> ladder[1..5), senior ->
+    ladder[2..6) — every level gets a full 4-question window on the 6-long
+    ladder.
+- src/lib/interviewGuide.ts:
+  - Removed ALL hand-written bridging sentences from skillGapStep() and
+    practicalVerificationStep(). Every focus area now surfaces 4 pure
+    topic-specific questions from getSkillQuestions() — nothing templated
+    with the skill name spliced in.
+  - Added jobResponsibilities?: string to InterviewGuideInput and a new
+    responsibilityNote() helper (using buildSkillRegex from
+    resumeAnalysis.ts) that appends "This is also called out directly in
+    this role's responsibilities." to a focus area's detail when that skill
+    is mentioned in the job's free-text responsibilities field.
+  - Reworked generateFocusAreas() ordering so required skills dominate even
+    when there are no required *gaps*:
+      1. ALL required-skill gaps (missing > related > listed severity)
+      2. Up to 3 required-skill "verify hands-on depth" steps (covers the
+         all-practical-required case)
+      3. Nice-to-have gaps, filling remaining slots (by severity)
+      4. Any leftover required/nice-to-have practical-verification steps
+    MAX_SKILL_FOCUS_AREAS stays 5, but each step now carries 4 questions ->
+    ~20 topic-specific questions from skill focus areas alone, before
+    education/experience/carry-forward questions are added (well above the
+    "10-15+" target).
+- src/pages/interviews/[id].astro:
+  - jobId populate now includes `responsibilities`.
+  - generateInterviewGuide() call passes jobResponsibilities: job?.responsibilities.
+  - Interview Guide list now has max-height:560px + overflow-y:auto so longer
+    guides scroll instead of pushing the page layout around.
+- src/pages/assessments/[id].astro:
+  - jobId populate now includes `responsibilities`.
+  - generateFocusAreas() call passes jobResponsibilities: job?.responsibilities.
+  - "Suggested Focus Areas" list now has max-height:480px + overflow-y:auto.
+
+Verification:
+- `npx astro build` — production build completes successfully, no new errors.
+- Spot-checked the "Muskan" Junior Frontend Developer candidate
+  (6a285d288460565560e81c71, 0 required-skill gaps, all 5 required skills
+  'practical', experience ~3.3y -> mid level):
+  - Guide is now: React (verify depth, tied to JD responsibility) ->
+    JavaScript (verify depth) -> HTML (verify depth) -> Testing (missing,
+    nice-to-have, now uses real unit-testing questions) -> TypeScript
+    (related via JavaScript, nice-to-have) -> education/experience (n/a) ->
+    standard intro/behavioral/Q&A/wrap-up.
+  - 22 total questions across the guide (20 from the 5 skill focus areas +
+    2 behavioral), zero generic "Walk me through the most complex thing..."/
+    "Have you worked with..."/"You've listed..."/"Your resume highlights..."
+    sentences anywhere.

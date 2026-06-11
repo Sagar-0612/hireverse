@@ -2,8 +2,12 @@
 import AppLayout from "../../layouts/AppLayout.astro";
 import { connectDB } from "../../db/connection";
 import { Interview } from "../../db/models/Interview";
+import { Candidate } from "../../db/models/Candidate";
+import { Assessment } from "../../db/models/Assessment";
 import { Types } from "mongoose";
-import { findStage } from "../../lib/pipeline";
+import { findStage, sortedPipeline, hasUpcomingInterviewStage, hasUpcomingAssessmentStage } from "../../lib/pipeline";
+import { scoreColorHex } from "../../lib/scoreColor";
+import { generateInterviewGuide, type PriorRoundSummary } from "../../lib/interviewGuide";
 
 const { id } = Astro.params;
 if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/interviews');
@@ -11,7 +15,7 @@ if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/interviews');
 await connectDB();
 const raw = await Interview.findById(id)
   .populate('candidateId', 'name rejected')
-  .populate('jobId', 'title pipeline')
+  .populate('jobId', 'title pipeline requiredSkills niceToHaveSkills education level responsibilities')
   .lean();
 if (!raw) return Astro.redirect('/interviews');
 
@@ -31,10 +35,57 @@ const interview = {
 };
 
 const isCompleted = interview.status === 'completed';
-// Legacy records completed before this analysis system existed carry scores
-// but no real `analysis` — flag them so the UI offers a path to backfill real
-// feedback instead of silently showing empty feedback/transcript sections.
 const needsAnalysis = isCompleted && !interview.analysis;
+
+// Determine what action makes sense for "next step" based on the candidate's
+// remaining pipeline — avoid offering "Schedule Interview" when the next stage
+// is actually a coding test, and vice versa.
+const candidateDoc = !interview.candidateRejected
+  ? await Candidate.findById(interview.candidateId, 'currentStage rejected skillGaps score skillsMatch educationMatch experience recommendation').lean()
+  : null;
+const candidatePipeline = sortedPipeline(job?.pipeline || []);
+const nextCanScheduleInterview = candidateDoc
+  ? !candidateDoc.rejected && hasUpcomingInterviewStage(candidatePipeline, candidateDoc.currentStage)
+  : false;
+const nextCanScheduleAssessment = candidateDoc
+  ? !candidateDoc.rejected && hasUpcomingAssessmentStage(candidatePipeline, candidateDoc.currentStage)
+  : false;
+
+// Build a gap-focused, accumulating interview guide for upcoming/in-progress
+// interviews — pulls in this candidate's resume skill gaps plus concerns
+// raised in any prior completed interviews/assessments so each new round
+// picks up where the last one left off.
+let guideSteps: { title: string; detail: string; questions?: string[] }[] = [];
+if (!isCompleted) {
+  const [priorInterviews, priorAssessments] = await Promise.all([
+    Interview.find({
+      candidateId: interview.candidateId,
+      _id: { $ne: interview.id },
+      status: 'completed',
+      analysis: { $ne: null },
+    }, 'round analysis').lean(),
+    Assessment.find({
+      candidateId: interview.candidateId,
+      status: 'evaluated',
+      analysis: { $ne: null },
+    }, 'round analysis').lean(),
+  ]);
+
+  const priorRounds: PriorRoundSummary[] = [
+    ...priorInterviews.map((iv: any) => ({ round: iv.round, type: 'interview' as const, concerns: iv.analysis?.concerns || [] })),
+    ...priorAssessments.map((a: any) => ({ round: a.round, type: 'assessment' as const, concerns: a.analysis?.concerns || [] })),
+  ].filter(r => r.concerns.length > 0);
+
+  guideSteps = generateInterviewGuide({
+    jobLevel: job?.level || '',
+    jobEducation: job?.education || '',
+    skillGaps: candidateDoc?.skillGaps || [],
+    educationMatch: candidateDoc?.educationMatch ?? 100,
+    experience: candidateDoc?.experience ?? 0,
+    priorRounds,
+    jobResponsibilities: job?.responsibilities || '',
+  });
+}
 ---
 
 <AppLayout title={`${interview.candidateName} · Interview`} activeNav="interviews">
@@ -95,18 +146,18 @@ const needsAnalysis = isCompleted && !interview.analysis;
       <div class="grid-cols-3" style="margin-bottom:20px;">
         <div class="stat-card shadow-lvl-2" style="text-align:center;">
           <div class="stat-label">Communication</div>
-          <div class="stat-value">{interview.commScore}</div>
-          <div class="progress" style="margin-top:8px;"><div class="progress-bar" style={`width:${interview.commScore}%`}></div></div>
+          <div class="stat-value" style={`color:${scoreColorHex(interview.commScore)};`}>{interview.commScore}</div>
+          <div class="progress" style="margin-top:8px;"><div class="progress-bar" style={`width:${interview.commScore}%;background:${scoreColorHex(interview.commScore)};`}></div></div>
         </div>
         <div class="stat-card shadow-lvl-2" style="text-align:center;">
           <div class="stat-label">Technical</div>
-          <div class="stat-value">{interview.techScore}</div>
-          <div class="progress" style="margin-top:8px;"><div class="progress-bar" style={`width:${interview.techScore}%`}></div></div>
+          <div class="stat-value" style={`color:${scoreColorHex(interview.techScore)};`}>{interview.techScore}</div>
+          <div class="progress" style="margin-top:8px;"><div class="progress-bar" style={`width:${interview.techScore}%;background:${scoreColorHex(interview.techScore)};`}></div></div>
         </div>
         <div class="stat-card shadow-lvl-2" style="text-align:center;">
           <div class="stat-label">Confidence</div>
-          <div class="stat-value">{interview.confidenceScore}</div>
-          <div class="progress" style="margin-top:8px;"><div class="progress-bar" style={`width:${interview.confidenceScore}%`}></div></div>
+          <div class="stat-value" style={`color:${scoreColorHex(interview.confidenceScore)};`}>{interview.confidenceScore}</div>
+          <div class="progress" style="margin-top:8px;"><div class="progress-bar" style={`width:${interview.confidenceScore}%;background:${scoreColorHex(interview.confidenceScore)};`}></div></div>
         </div>
       </div>
 
@@ -201,10 +252,13 @@ const needsAnalysis = isCompleted && !interview.analysis;
                     : 'Review the recommendation above, then choose how to proceed.'}
             </p>
             <div style="display:flex;flex-direction:column;gap:8px;">
-              {!interview.candidateRejected && (
-                <a href={`/interviews/schedule?candidate=${interview.candidateId}`} class="btn btn-primary" style="width:100%;border-radius:6px;">Schedule Next Round</a>
+              {nextCanScheduleInterview && (
+                <a href={`/interviews/schedule?candidate=${interview.candidateId}`} class="btn btn-primary" style="width:100%;border-radius:6px;">Schedule Next Interview</a>
               )}
-              <a href={`/candidates/${interview.candidateId}`} class={`btn ${interview.candidateRejected ? 'btn-primary' : 'btn-secondary'}`} style="width:100%;border-radius:6px;">View Candidate</a>
+              {nextCanScheduleAssessment && (
+                <a href={`/assessments/create?candidate=${interview.candidateId}`} class="btn btn-primary" style="width:100%;border-radius:6px;">Create Assessment</a>
+              )}
+              <a href={`/candidates/${interview.candidateId}`} class={`btn ${(!nextCanScheduleInterview && !nextCanScheduleAssessment) ? 'btn-primary' : 'btn-secondary'}`} style="width:100%;border-radius:6px;">View Candidate</a>
             </div>
           </div>
         </div>
@@ -214,18 +268,21 @@ const needsAnalysis = isCompleted && !interview.analysis;
     <div class="grid-main-aside" style="--aside-w:320px;">
       <div class="card shadow-lvl-2">
         <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Interview Guide</h2>
-        <div style="display:flex;flex-direction:column;gap:12px;">
-          {[
-            "Review the candidate's resume and AI analysis before the session.",
-            "Begin with a brief intro and role overview (5 min).",
-            "Technical deep-dive: system design or coding exercise (30–40 min).",
-            "Behavioral questions: communication, collaboration, growth mindset (15 min).",
-            "Candidate Q&A (5–10 min).",
-            "Submit feedback within 24 hours on HireVerse AI.",
-          ].map((step, i) => (
+        <div style="display:flex;flex-direction:column;gap:12px;max-height:560px;overflow-y:auto;padding-right:6px;">
+          {guideSteps.map((step, i) => (
             <div style="display:flex;gap:12px;align-items:flex-start;">
               <div style="width:22px;height:22px;border-radius:50%;background:var(--bg-soft);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;flex-shrink:0;margin-top:1px;border:1px solid var(--border);">{i + 1}</div>
-              <div style="font-size:13px;color:var(--fg-body);line-height:1.5;">{step}</div>
+              <div style="font-size:13px;color:var(--fg-body);line-height:1.5;">
+                <div style="font-weight:600;color:var(--fg);margin-bottom:2px;">{step.title}</div>
+                <div>{step.detail}</div>
+                {step.questions && step.questions.length > 0 && (
+                  <ul style="margin:6px 0 0;padding-left:18px;color:var(--fg-mute);">
+                    {step.questions.map(q => (
+                      <li style="margin-bottom:2px;">{q}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           ))}
         </div>

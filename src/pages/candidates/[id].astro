@@ -4,9 +4,10 @@ import { connectDB } from "../../db/connection";
 import { Candidate } from "../../db/models/Candidate";
 import { Interview } from "../../db/models/Interview";
 import { Types } from "mongoose";
-import { sortedPipeline, getValidNextStages, findStage, getIconSvg, isHiredStage } from "../../lib/pipeline";
+import { sortedPipeline, getValidNextStages, findStage, getIconSvg, isHiredStage, hasUpcomingInterviewStage, hasUpcomingAssessmentStage } from "../../lib/pipeline";
 import { buildCandidateSummary } from "../../lib/candidateSummary";
 import { formatExperience } from "../../lib/resumeAnalysis";
+import { Assessment } from "../../db/models/Assessment";
 
 const { id } = Astro.params;
 if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/candidates');
@@ -23,8 +24,11 @@ const validStages = getValidNextStages(pipeline, raw.currentStage);
 // round" nor "reject" are sensible actions left to offer.
 const isHired = !raw.rejected && isHiredStage(pipeline, raw.currentStage);
 const canScheduleOrReject = !raw.rejected && !isHired;
+const canScheduleInterview = canScheduleOrReject && hasUpcomingInterviewStage(pipeline, raw.currentStage);
+const canScheduleAssessment = canScheduleOrReject && hasUpcomingAssessmentStage(pipeline, raw.currentStage);
 
 const interviewDocs = await Interview.find({ candidateId: id }).sort({ date: 1, time: 1 }).lean();
+const assessmentDocs = await Assessment.find({ candidateId: id }).sort({ createdAt: 1 }).lean();
 
 // The most recent human-written stage-move remark — auto-advance notes are
 // system-generated filler, not a recruiter's actual read, so they're excluded.
@@ -89,13 +93,28 @@ const candidate = {
   applied: new Date(raw.createdAt).toISOString().split('T')[0],
 };
 
-// Three real, inspectable tiers — not a guess: a skill that's nowhere on the
-// resume scores 0 (not "20% just for being asked about"); one that's merely
-// named scores moderately; one with real evidence of hands-on use (built into
-// a project, "Tech Stack:", etc. — see practicalSkills) scores high. Every
-// number traces back to whether the resume's own text actually supports it.
+// Four real, inspectable tiers — not a guess: a skill that's nowhere on the
+// resume (and has no related-skill evidence either) scores 0; one with a
+// related skill on the resume (e.g. Node.js for "REST API") scores partial
+// credit; one that's merely named scores moderately; one with real evidence
+// of hands-on use (built into a project, "Tech Stack:", etc. — see
+// practicalSkills) scores high. Every number traces back to whether the
+// resume's own text actually supports it (see skillGaps / resumeAnalysis.ts).
 const skillsToShow = candidate.jobSkills.length ? candidate.jobSkills : (candidate.skills || []);
+const skillGapsBySkill = new Map((candidate.skillGaps || []).map((g: any) => [g.skill.toLowerCase(), g]));
 const skillStatus = skillsToShow.map((skill: string) => {
+  const gap = skillGapsBySkill.get(skill.toLowerCase());
+  if (gap) {
+    const niceToHaveSuffix = gap.required ? '' : ' (nice-to-have for this role)';
+    const labels: Record<string, string> = {
+      practical: 'Used in a project or role — not just listed',
+      listed: `Listed, but no project/work evidence found${niceToHaveSuffix}`,
+      related: `Not directly listed, but "${gap.relatedSkill}" suggests working knowledge${niceToHaveSuffix}`,
+      missing: `Not found on resume${niceToHaveSuffix}`,
+    };
+    return { score: gap.score, label: labels[gap.status] || 'Not found on resume' };
+  }
+  // Legacy fallback for candidates analyzed before skillGaps existed.
   const matched = (candidate.skills || []).some((s: string) => s.toLowerCase() === skill.toLowerCase());
   if (!matched) return { score: 0, label: 'Not found on resume' };
   const demonstrated = (candidate.practicalSkills || []).some((s: string) => s.toLowerCase() === skill.toLowerCase());
@@ -124,7 +143,8 @@ const skillStatus = skillsToShow.map((skill: string) => {
     </div>
     <div style="display:flex;gap:8px;flex-shrink:0;">
       <a href={`/candidates/${candidate.id}/journey`} class="btn btn-secondary btn-sm">Journey</a>
-      {canScheduleOrReject && <a href={`/interviews/schedule?candidate=${candidate.id}`} class="btn btn-primary btn-sm">Schedule Interview</a>}
+      {canScheduleInterview && <a href={`/interviews/schedule?candidate=${candidate.id}`} class="btn btn-primary btn-sm">Schedule Interview</a>}
+      {canScheduleAssessment && <a href={`/assessments/create?candidate=${candidate.id}`} class="btn btn-secondary btn-sm">Create Assessment</a>}
     </div>
   </div>
 
@@ -241,11 +261,37 @@ const skillStatus = skillsToShow.map((skill: string) => {
               <div>
                 <div style="display:flex;align-items:center;gap:12px;">
                   <div style="width:110px;font-size:13px;color:var(--fg-body);flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title={skill}>{skill}</div>
-                  <div class="progress" style="flex:1;"><div class="progress-bar" style={`width:${skillStatus[i].score}%;background:${skillStatus[i].score === 0 ? '#ef4444' : skillStatus[i].score >= 95 ? '#10b981' : 'var(--accent, #6366f1)'};`}></div></div>
+                  <div class="progress" style="flex:1;"><div class="progress-bar" style={`width:${skillStatus[i].score}%;background:${skillStatus[i].score === 0 ? '#ef4444' : skillStatus[i].score <= 35 ? '#f59e0b' : skillStatus[i].score >= 95 ? '#10b981' : 'var(--accent, #6366f1)'};`}></div></div>
                   <div style="font-size:12px;color:var(--fg-mute);width:32px;text-align:right;font-family:'JetBrains Mono',monospace;">{skillStatus[i].score}%</div>
                 </div>
                 <div style="font-size:11px;color:var(--fg-mute);margin:3px 0 0 122px;">{skillStatus[i].label}</div>
               </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <!-- Assessments -->
+      {assessmentDocs.length > 0 && (
+        <div class="card shadow-lvl-2">
+          <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Assessments</h2>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            {assessmentDocs.map((a: any) => (
+              <a href={`/assessments/${a._id}`} style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg-soft);border-radius:6px;border:1px solid var(--border);text-decoration:none;color:inherit;">
+                <div>
+                  <div style="font-size:13px;font-weight:500;color:var(--fg);">{a.round}</div>
+                  <div style="font-size:11px;color:var(--fg-mute);margin-top:2px;">
+                    {a.type.charAt(0).toUpperCase() + a.type.slice(1)}
+                    {a.testsTotal > 0 && ` · ${a.testsPassed}/${a.testsTotal} tests`}
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  {a.status === 'evaluated' && a.overallScore > 0 && (
+                    <div style={`font-size:16px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${a.overallScore >= 80 ? '#10b981' : a.overallScore >= 60 ? '#f59e0b' : '#ef4444'};`}>{a.overallScore}</div>
+                  )}
+                  <span class={`badge ${a.status === 'evaluated' ? 'badge-success' : a.status === 'submitted' ? 'badge-info' : 'badge-neutral'}`} style="font-size:10px;">{a.status}</span>
+                </div>
+              </a>
             ))}
           </div>
         </div>
@@ -311,7 +357,8 @@ const skillStatus = skillsToShow.map((skill: string) => {
         <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Actions</h3>
         <div style="display:flex;flex-direction:column;gap:8px;">
           <a href={`/candidates/${candidate.id}/journey`} class="btn btn-primary" style="width:100%;border-radius:6px;">View Journey</a>
-          {canScheduleOrReject && <a href={`/interviews/schedule?candidate=${candidate.id}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">Schedule Interview</a>}
+          {canScheduleInterview && <a href={`/interviews/schedule?candidate=${candidate.id}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">Schedule Interview</a>}
+          {canScheduleAssessment && <a href={`/assessments/create?candidate=${candidate.id}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">Create Assessment</a>}
           {canScheduleOrReject && <button id="reject-btn" class="btn btn-ghost" style="width:100%;color:#ef4444;">Reject Candidate</button>}
           <button id="delete-btn" class="btn btn-ghost" style="width:100%;color:#ee0000;">Delete Candidate</button>
         </div>

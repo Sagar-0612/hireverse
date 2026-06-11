@@ -3,8 +3,10 @@ import AppLayout from "../../../layouts/AppLayout.astro";
 import { connectDB } from "../../../db/connection";
 import { Candidate } from "../../../db/models/Candidate";
 import { Interview } from "../../../db/models/Interview";
+import { Assessment } from "../../../db/models/Assessment";
 import { Types } from "mongoose";
-import { sortedPipeline, findStage, getValidNextStages, getIconSvg, isHiredStage } from "../../../lib/pipeline";
+import { sortedPipeline, findStage, getValidNextStages, getIconSvg, isHiredStage, hasUpcomingInterviewStage, hasUpcomingAssessmentStage } from "../../../lib/pipeline";
+import { scoreColorHex } from "../../../lib/scoreColor";
 
 const { id } = Astro.params;
 if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/candidates');
@@ -23,6 +25,8 @@ const validStages = getValidNextStages(pipeline, candidate.currentStage);
 // round" nor "reject"/"move stage" are sensible actions left to offer.
 const isHired = !raw.rejected && isHiredStage(pipeline, raw.currentStage);
 const canScheduleOrReject = !raw.rejected && !isHired;
+const canScheduleInterview = canScheduleOrReject && hasUpcomingInterviewStage(pipeline, raw.currentStage);
+const canScheduleAssessment = canScheduleOrReject && hasUpcomingAssessmentStage(pipeline, raw.currentStage);
 
 const interviews = await Interview.find({ candidateId: id }).sort({ date: 1, time: 1 }).lean();
 const interviewsByStage = new Map<string, typeof interviews>();
@@ -30,6 +34,14 @@ for (const iv of interviews) {
   const key = iv.pipelineStage || '';
   if (!interviewsByStage.has(key)) interviewsByStage.set(key, []);
   interviewsByStage.get(key)!.push(iv);
+}
+
+const assessments = await Assessment.find({ candidateId: id }).sort({ createdAt: 1 }).lean();
+const assessmentsByStage = new Map<string, typeof assessments>();
+for (const a of assessments) {
+  const key = a.pipelineStage || '';
+  if (!assessmentsByStage.has(key)) assessmentsByStage.set(key, []);
+  assessmentsByStage.get(key)!.push(a);
 }
 
 // The journey is built entirely from real records: an implicit "arrived at the
@@ -131,6 +143,7 @@ const totalSteps = pipeline.length || 1;
           {events.map((ev, i) => {
             const isLast = i === events.length - 1 && pendingStages.length === 0;
             const stageInterviews = ev.type === 'arrival' ? (interviewsByStage.get(ev.stageKey || '') || []) : [];
+            const stageAssessments = ev.type === 'arrival' ? (assessmentsByStage.get(ev.stageKey || '') || []) : [];
             return (
               <div class="timeline-item" style={isLast ? 'padding-bottom:0;' : ''}>
                 <div class="timeline-dot completed" style={ev.type === 'rejection' ? 'border-color:#ef4444;background:#ef4444;' : `border-color:${ev.color};background:${ev.color};`}>
@@ -172,17 +185,88 @@ const totalSteps = pipeline.length || 1;
                   {stageInterviews.length > 0 && (
                     <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">
                       {stageInterviews.map(iv => (
-                        <a href={`/interviews/${iv._id.toString()}`} style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:6px;background:var(--bg-soft);border:1px solid var(--border);text-decoration:none;">
-                          <div>
-                            <div style="font-size:13px;font-weight:500;color:var(--fg);">{iv.round}</div>
-                            <div style="font-size:12px;color:var(--fg-mute);">{iv.date} · {iv.time} · {iv.interviewer}</div>
-                            {iv.status === 'completed' && iv.techScore > 0 && (
-                              <div style="font-size:11px;color:var(--fg-mute);margin-top:2px;font-family:'JetBrains Mono',monospace;">
-                                Tech: {iv.techScore} · Comm: {iv.commScore} · Conf: {iv.confidenceScore}
-                              </div>
-                            )}
+                        <a href={`/interviews/${iv._id.toString()}`} style="display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-radius:6px;background:var(--bg-soft);border:1px solid var(--border);text-decoration:none;">
+                          <div style="display:flex;align-items:center;gap:10px;">
+                            <div>
+                              <div style="font-size:13px;font-weight:500;color:var(--fg);">{iv.round}</div>
+                              <div style="font-size:12px;color:var(--fg-mute);">{iv.date} · {iv.time} · {iv.interviewer}</div>
+                            </div>
+                            <span class={`badge ${iv.status === 'completed' ? 'badge-success' : iv.status === 'cancelled' ? 'badge-neutral' : 'badge-info'}`} style="margin-left:auto;flex-shrink:0;">{iv.status}</span>
                           </div>
-                          <span class={`badge ${iv.status === 'completed' ? 'badge-success' : 'badge-info'}`} style="margin-left:auto;flex-shrink:0;">{iv.status}</span>
+                          {iv.status === 'completed' && iv.techScore > 0 && (
+                            <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;font-family:'JetBrains Mono',monospace;">
+                              <span style={`color:${scoreColorHex(iv.techScore)};`}>Tech: {iv.techScore}</span>
+                              <span style={`color:${scoreColorHex(iv.commScore)};`}>Comm: {iv.commScore}</span>
+                              <span style={`color:${scoreColorHex(iv.confidenceScore)};`}>Conf: {iv.confidenceScore}</span>
+                            </div>
+                          )}
+                          {iv.analysis && (
+                            <div style="display:flex;flex-direction:column;gap:4px;">
+                              <div style="display:flex;align-items:center;gap:8px;">
+                                <span class={`badge ${iv.analysis.decision === 'advance' ? 'badge-success' : 'badge-error'}`} style="font-size:11px;">
+                                  {iv.analysis.decision === 'advance' ? 'Recommended to advance' : 'Recommended to hold'}
+                                </span>
+                              </div>
+                              {iv.analysis.strengths?.length > 0 && (
+                                <div style="font-size:12px;color:var(--fg-body);line-height:1.5;">
+                                  <span style="color:#10b981;">Strengths:</span> {iv.analysis.strengths.join('; ')}
+                                </div>
+                              )}
+                              {iv.analysis.concerns?.length > 0 && (
+                                <div style="font-size:12px;color:var(--fg-body);line-height:1.5;">
+                                  <span style="color:#ef4444;">Concerns:</span> {iv.analysis.concerns.join('; ')}
+                                </div>
+                              )}
+                              {iv.analysis.reasoning && (
+                                <div style="font-size:12px;color:var(--fg-mute);line-height:1.5;">{iv.analysis.reasoning}</div>
+                              )}
+                            </div>
+                          )}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                  {stageAssessments.length > 0 && (
+                    <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">
+                      {stageAssessments.map(a => (
+                        <a href={`/assessments/${a._id.toString()}`} style="display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-radius:6px;background:var(--bg-soft);border:1px solid var(--border);text-decoration:none;">
+                          <div style="display:flex;align-items:center;gap:10px;">
+                            <div>
+                              <div style="font-size:13px;font-weight:500;color:var(--fg);">{a.round}</div>
+                              <div style="font-size:12px;color:var(--fg-mute);">{a.type}{a.testsTotal > 0 ? ` · ${a.testsPassed}/${a.testsTotal} tests passed` : ''}</div>
+                            </div>
+                            <span class={`badge ${a.status === 'evaluated' ? 'badge-success' : a.status === 'submitted' ? 'badge-info' : 'badge-neutral'}`} style="margin-left:auto;flex-shrink:0;">{a.status}</span>
+                          </div>
+                          {a.status === 'evaluated' && a.overallScore > 0 && (
+                            <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;font-family:'JetBrains Mono',monospace;">
+                              <span style={`color:${scoreColorHex(a.overallScore)};`}>Overall: {a.overallScore}</span>
+                              {a.codeQualityScore > 0 && <span style={`color:${scoreColorHex(a.codeQualityScore)};`}>Code Quality: {a.codeQualityScore}</span>}
+                              {a.algorithmScore > 0 && <span style={`color:${scoreColorHex(a.algorithmScore)};`}>Algorithm: {a.algorithmScore}</span>}
+                              {a.problemSolvingScore > 0 && <span style={`color:${scoreColorHex(a.problemSolvingScore)};`}>Problem Solving: {a.problemSolvingScore}</span>}
+                            </div>
+                          )}
+                          {a.analysis && (
+                            <div style="display:flex;flex-direction:column;gap:4px;">
+                              <div style="display:flex;align-items:center;gap:8px;">
+                                <span class={`badge ${a.analysis.decision === 'advance' ? 'badge-success' : 'badge-error'}`} style="font-size:11px;">
+                                  {a.analysis.decision === 'advance' ? 'Recommended to advance' : 'Recommended to hold'}
+                                </span>
+                              </div>
+                              {a.analysis.strengths?.length > 0 && (
+                                <div style="font-size:12px;color:var(--fg-body);line-height:1.5;">
+                                  <span style="color:#10b981;">Strengths:</span> {a.analysis.strengths.join('; ')}
+                                </div>
+                              )}
+                              {a.analysis.concerns?.length > 0 && (
+                                <div style="font-size:12px;color:var(--fg-body);line-height:1.5;">
+                                  <span style="color:#ef4444;">Concerns:</span> {a.analysis.concerns.join('; ')}
+                                </div>
+                              )}
+                              {a.analysis.reasoning && (
+                                <div style="font-size:12px;color:var(--fg-mute);line-height:1.5;">{a.analysis.reasoning}</div>
+                              )}
+                            </div>
+                          )}
                         </a>
                       ))}
                     </div>
@@ -238,10 +322,16 @@ const totalSteps = pipeline.length || 1;
         </div>
       )}
 
-      {canScheduleOrReject && (
+      {canScheduleInterview && (
         <div class="card shadow-lvl-2">
           <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Schedule Interview</h3>
           <a href={`/interviews/schedule?candidate=${candidate.id}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">Schedule Next Round</a>
+        </div>
+      )}
+      {canScheduleAssessment && (
+        <div class="card shadow-lvl-2">
+          <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Create Assessment</h3>
+          <a href={`/assessments/create?candidate=${candidate.id}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">Create Assessment</a>
         </div>
       )}
     </div>
