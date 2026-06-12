@@ -3,6 +3,9 @@ dist/
 # generated types
 .astro/
 
+# scratch dir used while recording FAQ walkthrough videos
+.tmp-faq-recordings/
+
 # dependencies
 node_modules/
 

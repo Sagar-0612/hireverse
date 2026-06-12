@@ -10,7 +10,8 @@
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro",
-    "seed": "node --experimental-strip-types src/scripts/seed-sample-data.ts"
+    "seed": "node --experimental-strip-types src/scripts/seed-sample-data.ts",
+    "record-faq-videos": "node --experimental-strip-types src/scripts/record-faq-videos.ts"
   },
   "dependencies": {
     "@astrojs/node": "^10.1.3",
@@ -27,6 +28,7 @@
   "devDependencies": {
     "@astrojs/check": "^0.9.9",
     "@types/nodemailer": "^7.0.4",
+    "playwright": "^1.60.0",
     "typescript": "^6.0.3"
   }
 }

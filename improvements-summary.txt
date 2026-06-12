@@ -887,3 +887,106 @@ FIX:
    walkthrough — coming soon" placeholder card describing exactly what that
    walkthrough would demonstrate, so real recordings can be dropped in
    later without restructuring the page.
+
+
+================================================================================
+PART 6 — AUTOMATED FAQ VIDEO WALKTHROUGHS (PLAYWRIGHT RECORDING TOOLING)
+================================================================================
+Date: 2026-06-12
+Scope: src/scripts/record-faq-videos.ts (new), src/pages/faq.astro,
+package.json, .gitignore, public/faq-videos/*.webm (new, generated assets).
+All changes are additive — `npx astro check` remains at the 126-error
+baseline (70 files / 126 errors, unchanged).
+
+REQUEST: after the Part 5 FAQ page shipped with "coming soon" video
+placeholders, the user asked whether real walkthrough videos could be
+generated for every FAQ item that references one, "intelligently ... cover
+all faqs videos properly and correctly, provide proper videos as per
+question and answer ... without causing regression".
+
+FIX:
+
+1. PLAYWRIGHT TOOLING ADDED
+ - Installed `playwright@1.60.0` as a devDependency (`npm install -D
+   playwright@1.60.0 --legacy-peer-deps` — the --legacy-peer-deps flag was
+   needed only because of a pre-existing @astrojs/tailwind peer-version
+   conflict with astro 6, unrelated to this change) and ran
+   `npx playwright install chromium` to fetch the Chromium browser binary.
+ - New npm script: `"record-faq-videos": "node --experimental-strip-types
+   src/scripts/record-faq-videos.ts"`.
+
+2. src/scripts/record-faq-videos.ts (NEW)
+ - Drives a real headless Chromium session against the running app (default
+   http://localhost:4321, overridable via FAQ_RECORD_BASE_URL) and records
+   one short .webm video per scenario via Playwright's `recordVideo` context
+   option, writing the result to public/faq-videos/<slug>.webm — one file
+   per `video.slug` referenced from faq.astro.
+ - If no dev server is already running at BASE_URL, the script starts
+   `astro dev` itself and waits for it to become ready, then shuts it down
+   afterwards.
+ - REGRESSION-SAFE BY DESIGN:
+     - Scenarios 1-4 (platform tour, dashboard activity, pipeline editing,
+       resume-upload modal) are purely read-only navigation/UI-interaction
+       against existing seeded data (the "Backend Engineer (Node.js)" job)
+       — the pipeline-edit scenario adds and then removes a stage in the UI
+       but never clicks "Save", so nothing is persisted.
+     - Scenarios 5-7 (schedule-interview conflict, reschedule overdue
+       interview, reschedule overdue assessment) need real
+       schedule/overdue state to demonstrate, so each one creates its own
+       throwaway Job ("FAQ Recording — Temp Job..."), Candidate (name
+       suffixed "(Demo)"), and Interview/Assessment record, performs the
+       walkthrough against them, and deletes all of it in a `finally` block
+       — guaranteeing cleanup even if a step throws. The real seeded demo
+       data (Backend Engineer job, Arjun Mehta / Priya Nair / Sunita Rao
+       candidates and their interviews/assessments) is never touched.
+     - For the conflict scenario, the conflicting time (10:15, against an
+       existing 10:00-11:00 interview with the 60-minute MIN_GAP_MINUTES
+       buffer) and the resolving time (15:00) were computed from
+       src/lib/scheduling.ts's `isWithinGap` logic so the recorded video
+       genuinely shows the error banner appearing and then clearing.
+ - Each scenario records to a project-local `.tmp-faq-recordings/<slug>-*`
+   directory (same drive as the repo) and renames the finished .webm into
+   public/faq-videos/, then removes the temp dir — recording to the OS temp
+   directory (a different drive on this machine) caused an EXDEV
+   cross-device rename failure, which this avoids.
+
+3. THE 7 RECORDED VIDEOS (public/faq-videos/*.webm)
+ - platform-tour.webm — tour of Dashboard, Jobs, Candidates, Interviews,
+   and Assessments via the sidebar.
+ - dashboard-activity.webm — reading the Dashboard stat cards and recent
+   activity feed, then jumping to Candidates.
+ - edit-pipeline.webm — opening a job's Edit page, adding a new pipeline
+   stage, then removing it again.
+ - resume-upload-modal.webm — switching to a job's Candidates tab and
+   opening the Upload Resumes panel.
+ - schedule-interview-conflict.webm — scheduling an interview, triggering
+   the conflict-detection error banner, then resolving it with a free slot.
+ - reschedule-interview.webm — rescheduling an overdue interview to a new
+   date/time and watching the Overdue badge clear.
+ - reschedule-assessment.webm — rescheduling an overdue assessment's due
+   date and watching the Overdue badge clear.
+
+4. src/pages/faq.astro UPDATED
+ - Each FAQ item's `video` field is now `{ slug, description }`.
+ - At build/request time, faq.astro checks whether
+   public/faq-videos/<slug>.webm exists on disk: if so it renders a real
+   `<video controls preload="none">` player with the description beneath
+   it; if not (e.g. before this tooling was run), it falls back to the
+   original "Video walkthrough — coming soon" placeholder card. Either way
+   the page renders correctly with zero broken-video risk.
+
+5. .gitignore
+ - Added `.tmp-faq-recordings/` (the scratch directory used while
+   recording). public/faq-videos/ itself is tracked, since the .webm files
+   are real product assets for the FAQ page, not build output.
+
+VERIFIED:
+ - All 7 .webm files generated in public/faq-videos/ (range ~330KB-670KB
+   each).
+ - GET /faq now serves all 7 <video src="/faq-videos/*.webm"> tags with no
+   remaining "coming soon" placeholders.
+ - No leftover "FAQ Recording — Temp Job..." jobs or "(Demo)" candidates in
+   MongoDB after the run — temp records were created and cleaned up
+   correctly for scenarios 5-7.
+ - `.tmp-faq-recordings/` removed after the run.
+ - `npx astro check` unchanged at 70 files / 126 errors.

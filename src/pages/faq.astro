@@ -1,10 +1,16 @@
 ---
+import fs from "node:fs";
+import path from "node:path";
 import AppLayout from "../layouts/AppLayout.astro";
 
 interface FaqItem {
   q: string;
   a: string; // HTML allowed
-  video?: string; // short description of what the walkthrough would show
+  video?: {
+    slug: string; // matches public/faq-videos/<slug>.webm, recorded by
+                   // `npm run record-faq-videos`
+    description: string; // what the walkthrough demonstrates
+  };
 }
 
 interface FaqCategory {
@@ -30,12 +36,18 @@ const categories: FaqCategory[] = [
           <li><strong>Evaluate written/coding assessments</strong> and interview transcripts using AI-assisted scoring</li>
           <li>View <strong>analytics</strong> across your pipeline, and keep a full <strong>activity log / audit trail</strong> of everything that happens to a candidate</li>
         </ul>`,
-        video: "A 90-second tour of the Dashboard, sidebar navigation, and the four core sections: Jobs, Candidates, Interviews, and Assessments.",
+        video: {
+          slug: "platform-tour",
+          description: "A tour of the Dashboard, then Jobs, Candidates, Interviews, and Assessments via the sidebar navigation.",
+        },
       },
       {
         q: "What does the Dashboard show me?",
         a: `The Dashboard is your home base. It shows headline numbers (open jobs, total candidates, interviews this week, pending assessments), a feed of recent activity across the whole platform, and quick links into jobs that need attention. Use it as your daily "what changed since I last looked" view.`,
-        video: "Walkthrough of reading the Dashboard stat cards and recent activity feed, and jumping from an activity entry straight to the related candidate or job.",
+        video: {
+          slug: "dashboard-activity",
+          description: "Reading the Dashboard stat cards and recent activity feed, then navigating to Candidates to find the record an activity entry refers to.",
+        },
       },
       {
         q: "How is the platform organized?",
@@ -55,7 +67,10 @@ const categories: FaqCategory[] = [
       {
         q: "Can each job have a different pipeline (stages)?",
         a: `Yes — pipelines are <strong>per-job and fully configurable</strong>. A typical pipeline might be: Applied → Resume Screen → Coding Test → Written Assessment → Technical Interview → Final Interview → Offer → Hired, but you can add, remove, reorder, rename, recolor, and re-icon stages from <strong>Jobs → [Job] → Edit → Pipeline</strong>. The system automatically detects which stages are "assessment" stages (anything with "test", "assessment", "coding", or "written" in the name) and which are "interview" stages, so scheduling and overdue logic work correctly no matter how you name your stages.`,
-        video: "Editing a job's pipeline: adding a new 'Written Assessment' stage between Coding Test and Technical Interview, reordering it, and saving.",
+        video: {
+          slug: "edit-pipeline",
+          description: "Opening a job's Edit page, adding a new pipeline stage, naming it, and removing it again to show how stages are added/reordered/removed.",
+        },
       },
       {
         q: "How do candidates move between stages?",
@@ -79,7 +94,10 @@ const categories: FaqCategory[] = [
         a: `When you upload a resume (PDF, DOCX, TXT, or Markdown), HireVerse extracts the candidate's <strong>name, email, phone, location, total experience, skills, education match, and key achievements</strong>, then compares them against the job's required and nice-to-have skills to compute a <strong>fit score</strong> and a recommendation (e.g. Strong Match, Possible Match, Weak Match). It also flags any <strong>skill gaps</strong> relative to the job requirements.
         <br/><br/>
         The parser is built to handle many resume formats and writing styles — plain prose, bulleted Markdown with headers, ALL-CAPS layouts, "Name: ..." labeled templates, and more — so scores stay reliable however a candidate's resume happens to be formatted.`,
-        video: "Uploading three resumes in different formats (plain text, Markdown with headers/bullets, all-caps) for the same job and comparing the resulting scores and extracted fields.",
+        video: {
+          slug: "resume-upload-modal",
+          description: "Opening a job and launching the Upload Resumes panel, where resumes are dropped or browsed for AI analysis.",
+        },
       },
       {
         q: "What does the candidate fit score actually measure?",
@@ -103,7 +121,10 @@ const categories: FaqCategory[] = [
       {
         q: "How do I schedule an interview?",
         a: `From a candidate's profile (or the Interviews section), choose <strong>Schedule Interview</strong>, pick the round/type, date, time, duration, and interviewer. The system checks for <strong>double-booking</strong> — if the candidate or interviewer already has another session too close in time (within the minimum gap), it blocks the save and tells you exactly which existing session conflicts and at what time, so you can pick a different slot.`,
-        video: "Scheduling an interview, triggering a conflict warning by picking a clashing time, then resolving it by choosing a free slot.",
+        video: {
+          slug: "schedule-interview-conflict",
+          description: "Scheduling an interview, triggering a conflict warning by picking a clashing time, then resolving it by choosing a free slot.",
+        },
       },
       {
         q: "What happens if an interview's scheduled time passes with nothing recorded?",
@@ -116,7 +137,10 @@ const categories: FaqCategory[] = [
       {
         q: "Can I reschedule an interview? Does it re-check for conflicts?",
         a: `Yes. Open the interview and click <strong>Reschedule</strong> (available for any interview that's still <em>scheduled</em> or <em>rescheduled</em> — not for completed/cancelled ones). Pick a new date/time; the same double-booking check used at creation time runs again, so a reschedule can't silently collide with another session. Once saved, the change — old time → new time — is recorded in the activity log for full traceability.`,
-        video: "Rescheduling an interview from an overdue slot to a new date/time, and viewing the resulting 'rescheduled from ... to ...' entry in the activity log.",
+        video: {
+          slug: "reschedule-interview",
+          description: "Rescheduling an overdue interview to a new date/time and seeing the Overdue badge clear.",
+        },
       },
     ],
   },
@@ -140,7 +164,10 @@ const categories: FaqCategory[] = [
       {
         q: "Can a coding or written assessment deadline be rescheduled?",
         a: `Yes. From the assessment's detail page, click <strong>Reschedule Due Date</strong> (or <strong>Set Due Date</strong> if none was set yet), pick a new date/time, and save. The change — including the previous deadline — is written to the activity log, so there's a clear record of why and when a deadline moved.`,
-        video: "Opening an overdue 'Coding Test' assessment, rescheduling its due date to a future date/time, and seeing the Overdue badge disappear.",
+        video: {
+          slug: "reschedule-assessment",
+          description: "Opening an overdue assessment, rescheduling its due date to a future date/time, and seeing the Overdue badge disappear.",
+        },
       },
       {
         q: "Does 'Mark as Submitted' check that the candidate actually wrote something?",
@@ -233,6 +260,16 @@ const categories: FaqCategory[] = [
 ];
 
 const totalCount = categories.reduce((sum, c) => sum + c.items.length, 0);
+
+// Videos are recorded separately via `npm run record-faq-videos`
+// (src/scripts/record-faq-videos.ts) and land in public/faq-videos/<slug>.webm.
+// Render a real <video> player when a recording exists for an item, and a
+// "coming soon" placeholder otherwise — so the page works before recordings
+// are made and upgrades automatically once they are.
+const videoDir = path.resolve("public/faq-videos");
+function hasVideo(slug: string): boolean {
+  return fs.existsSync(path.join(videoDir, `${slug}.webm`));
+}
 ---
 
 <AppLayout title="Help & FAQ" activeNav="faq">
@@ -281,15 +318,29 @@ const totalCount = categories.reduce((sum, c) => sum + c.items.length, 0);
                 <div class="faq-answer-inner">
                   <div set:html={item.a} style="font-size:13px;line-height:1.7;color:var(--fg-body);" />
                   {item.video && (
-                    <div style="margin-top:14px;display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px dashed var(--border-strong);border-radius:var(--radius-md);background:var(--bg-soft-2);">
-                      <div style="width:32px;height:32px;border-radius:50%;background:var(--card-bg);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-                        <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M3 2.5v11l10-5.5z" fill="currentColor"/></svg>
+                    hasVideo(item.video.slug) ? (
+                      <div style="margin-top:14px;">
+                        <div style="font-size:12px;font-weight:500;color:var(--fg);margin-bottom:6px;">Video walkthrough</div>
+                        <video
+                          controls
+                          preload="none"
+                          playsinline
+                          style="width:100%;max-width:560px;border-radius:var(--radius-md);border:1px solid var(--border);background:#000;display:block;"
+                          src={`/faq-videos/${item.video.slug}.webm`}
+                        />
+                        <div style="font-size:12px;color:var(--fg-mute);margin-top:6px;">{item.video.description}</div>
                       </div>
-                      <div style="min-width:0;">
-                        <div style="font-size:12px;font-weight:500;color:var(--fg);">Video walkthrough — coming soon</div>
-                        <div style="font-size:12px;color:var(--fg-mute);margin-top:2px;">{item.video}</div>
+                    ) : (
+                      <div style="margin-top:14px;display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px dashed var(--border-strong);border-radius:var(--radius-md);background:var(--bg-soft-2);">
+                        <div style="width:32px;height:32px;border-radius:50%;background:var(--card-bg);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M3 2.5v11l10-5.5z" fill="currentColor"/></svg>
+                        </div>
+                        <div style="min-width:0;">
+                          <div style="font-size:12px;font-weight:500;color:var(--fg);">Video walkthrough — coming soon</div>
+                          <div style="font-size:12px;color:var(--fg-mute);margin-top:2px;">{item.video.description}</div>
+                        </div>
                       </div>
-                    </div>
+                    )
                   )}
                 </div>
               </div>
