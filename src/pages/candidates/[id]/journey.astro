@@ -5,7 +5,7 @@ import { Candidate } from "../../../db/models/Candidate";
 import { Interview } from "../../../db/models/Interview";
 import { Assessment } from "../../../db/models/Assessment";
 import { Types } from "mongoose";
-import { sortedPipeline, findStage, getValidNextStages, getIconSvg, isHiredStage, hasUpcomingInterviewStage, hasUpcomingAssessmentStage } from "../../../lib/pipeline";
+import { sortedPipeline, findStage, getValidNextStages, getIconSvg, isHiredStage, getCandidateStageActions, type StageRecordStatus } from "../../../lib/pipeline";
 import { scoreColorHex } from "../../../lib/scoreColor";
 
 const { id } = Astro.params;
@@ -25,8 +25,6 @@ const validStages = getValidNextStages(pipeline, candidate.currentStage);
 // round" nor "reject"/"move stage" are sensible actions left to offer.
 const isHired = !raw.rejected && isHiredStage(pipeline, raw.currentStage);
 const canScheduleOrReject = !raw.rejected && !isHired;
-const canScheduleInterview = canScheduleOrReject && hasUpcomingInterviewStage(pipeline, raw.currentStage);
-const canScheduleAssessment = canScheduleOrReject && hasUpcomingAssessmentStage(pipeline, raw.currentStage);
 
 const interviews = await Interview.find({ candidateId: id }).sort({ date: 1, time: 1 }).lean();
 const interviewsByStage = new Map<string, typeof interviews>();
@@ -43,6 +41,26 @@ for (const a of assessments) {
   if (!assessmentsByStage.has(key)) assessmentsByStage.set(key, []);
   assessmentsByStage.get(key)!.push(a);
 }
+
+// Per-stage record status — feeds getCandidateStageActions so only the
+// action relevant to the candidate's actual current stage in the pipeline
+// is offered, never both at once. A cancelled interview doesn't block
+// re-scheduling, so it's treated as if it never happened.
+const interviewStatusForStage = (stageKey: string): StageRecordStatus => {
+  const docs = (interviewsByStage.get(stageKey) || []).filter(iv => iv.status !== 'cancelled');
+  if (!docs.length) return 'none';
+  return docs.some(iv => iv.status === 'completed') ? 'done' : 'pending';
+};
+const assessmentStatusForStage = (stageKey: string): StageRecordStatus => {
+  const docs = assessmentsByStage.get(stageKey) || [];
+  if (!docs.length) return 'none';
+  return docs.some(a => a.status === 'evaluated') ? 'done' : 'pending';
+};
+const stageActions = canScheduleOrReject
+  ? getCandidateStageActions(pipeline, raw.currentStage, interviewStatusForStage, assessmentStatusForStage)
+  : { canScheduleInterview: false, canScheduleAssessment: false };
+const canScheduleInterview = stageActions.canScheduleInterview;
+const canScheduleAssessment = stageActions.canScheduleAssessment;
 
 // The journey is built entirely from real records: an implicit "arrived at the
 // first stage" event from createdAt, then every real stageHistory transition in
@@ -297,7 +315,10 @@ const totalSteps = pipeline.length || 1;
       <div class="card shadow-lvl-2">
         <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Current Stage</h3>
         {candidate.rejected ? (
-          <div style="font-size:20px;font-weight:600;color:#ef4444;margin-bottom:4px;">Rejected</div>
+          <>
+            <div style="font-size:20px;font-weight:600;color:#ef4444;margin-bottom:4px;">Rejected</div>
+            <button id="unreject-btn" class="btn btn-ghost" style="width:100%;margin-top:8px;">Undo Rejection</button>
+          </>
         ) : (
           <>
             <div style="font-size:20px;font-weight:600;color:var(--fg);margin-bottom:4px;">{currentStage?.label || candidate.currentStage}</div>
@@ -339,29 +360,33 @@ const totalSteps = pipeline.length || 1;
 </AppLayout>
 
 <script define:vars={{ candidateId: candidate.id }}>
-  async function moveCandidateStage(currentStage, notes, confirmSkipInterview) {
+  async function moveCandidateStage(currentStage, notes, extra = {}) {
     const res = await fetch(`/api/candidates/${candidateId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ currentStage, notes, ...(confirmSkipInterview ? { confirmSkipInterview: true } : {}) }),
+      body: JSON.stringify({ currentStage, notes, ...extra }),
     });
     if (res.ok) {
       window.location.reload();
       return;
     }
     const err = await res.json().catch(() => ({}));
-    // The API blocks moving someone past the interview stage with no analyzed
-    // interview on file — surfacing that gap here, with a deliberate way past
-    // it, rather than letting the stage and the AI read silently fall out of sync.
-    if (err.code === 'NO_ANALYZED_INTERVIEW') {
+    // The API blocks moving someone past the interview/assessment stage with
+    // no analyzed result on file — surfacing that gap here, with a deliberate
+    // way past it, rather than letting the stage and the AI read silently
+    // fall out of sync.
+    if (err.code === 'NO_ANALYZED_INTERVIEW' || err.code === 'NO_ANALYZED_ASSESSMENT') {
       const proceed = await window.hvConfirm({
-        title: 'No analyzed interview on record',
+        title: err.code === 'NO_ANALYZED_ASSESSMENT' ? 'No analyzed assessment on record' : 'No analyzed interview on record',
         message: `${err.error}\n\nMove them anyway?`,
         confirmLabel: 'Move anyway',
         cancelLabel: 'Go add feedback first',
         destructive: true,
       });
-      if (proceed) await moveCandidateStage(currentStage, notes, true);
+      if (proceed) {
+        const confirmFlag = err.code === 'NO_ANALYZED_ASSESSMENT' ? 'confirmSkipAssessment' : 'confirmSkipInterview';
+        await moveCandidateStage(currentStage, notes, { [confirmFlag]: true });
+      }
       return;
     }
     window.hvToast(err.error || 'Failed to update stage.', 'error');
@@ -376,13 +401,13 @@ const totalSteps = pipeline.length || 1;
       confirmLabel: 'Move',
     });
     if (notes === null) return;
-    await moveCandidateStage(currentStage, notes, false);
+    await moveCandidateStage(currentStage, notes, {});
   });
 
   document.getElementById('reject-btn')?.addEventListener('click', async () => {
     const ok = await window.hvConfirm({
       title: 'Reject candidate',
-      message: 'Reject this candidate? This is a terminal action and cannot be undone.',
+      message: 'Reject this candidate? This can be undone later from this page if needed.',
       confirmLabel: 'Reject',
       destructive: true,
     });
@@ -396,6 +421,25 @@ const totalSteps = pipeline.length || 1;
     else {
       const err = await res.json().catch(() => ({}));
       window.hvToast(err.error || 'Failed to reject candidate.', 'error');
+    }
+  });
+
+  document.getElementById('unreject-btn')?.addEventListener('click', async () => {
+    const ok = await window.hvConfirm({
+      title: 'Undo rejection',
+      message: 'Move this candidate back into the active pipeline?',
+      confirmLabel: 'Undo Rejection',
+    });
+    if (!ok) return;
+    const res = await fetch(`/api/candidates/${candidateId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rejected: false }),
+    });
+    if (res.ok) window.location.reload();
+    else {
+      const err = await res.json().catch(() => ({}));
+      window.hvToast(err.error || 'Failed to undo rejection.', 'error');
     }
   });
 </script>

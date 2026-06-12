@@ -16,12 +16,12 @@ export const GET: APIRoute = async ({ url }) => {
   const re = new RegExp(escapeRegex(q), 'i');
 
   const [jobs, candidates] = await Promise.all([
-    Job.find({ $or: [{ title: re }, { department: re }, { location: re }] })
+    Job.find({ $or: [{ title: re }, { department: re }, { location: re }, { requiredSkills: re }, { niceToHaveSkills: re }] })
       .select('title department location status')
       .sort({ createdAt: -1 })
       .limit(6)
       .lean(),
-    Candidate.find({ $or: [{ name: re }, { email: re }, { location: re }] })
+    Candidate.find({ $or: [{ name: re }, { email: re }, { location: re }, { skills: re }, { recommendation: re }] })
       .select('name email location currentStage jobId')
       .sort({ createdAt: -1 })
       .limit(6)

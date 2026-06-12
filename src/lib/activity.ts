@@ -1,4 +1,4 @@
-import { ActivityLog, type IActivityLog } from '../db/models/ActivityLog';
+import { ActivityLog, type IActivityLog } from '../db/models/ActivityLog.ts';
 
 export interface LogActivityInput {
   type: IActivityLog['type'];

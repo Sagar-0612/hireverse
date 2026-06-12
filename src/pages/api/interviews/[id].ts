@@ -6,6 +6,7 @@ import { Job } from '../../../db/models/Job';
 import { Types } from 'mongoose';
 import { logActivity } from '../../../lib/activity';
 import { analyzeInterview } from '../../../lib/interviewAnalysis';
+import { isWithinGap, MIN_GAP_MINUTES } from '../../../lib/scheduling';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
@@ -25,6 +26,45 @@ export const PUT: APIRoute = async ({ params, request }) => {
     // so a recruiter can retroactively add real feedback and get a genuine,
     // text-grounded verdict instead of being stuck with placeholder scores.
     const completingNow = body.status === 'completed' && (before.status !== 'completed' || !before.analysis);
+
+    // Reschedule: a new date and/or time for a still-active interview. Re-run
+    // the same double-booking guard used at creation time so a reschedule
+    // can't silently collide with another session for this candidate or
+    // interviewer.
+    const reschedulingNow =
+      (typeof body.date === 'string' && body.date !== before.date) ||
+      (typeof body.time === 'string' && body.time !== before.time);
+
+    if (reschedulingNow && before.status !== 'completed' && before.status !== 'cancelled') {
+      const newDate = typeof body.date === 'string' ? body.date : before.date;
+      const newTime = typeof body.time === 'string' ? body.time : before.time;
+      const newWindow = { time: newTime, duration: before.duration };
+
+      const sameDay = await Interview.find({
+        _id: { $ne: before._id },
+        date: newDate,
+        status: { $ne: 'cancelled' },
+        $or: [{ candidateId: before.candidateId }, { interviewer: before.interviewer }],
+      }).lean();
+
+      const candidateConflict = sameDay.find(
+        iv => iv.candidateId.toString() === before.candidateId.toString() && isWithinGap(iv, newWindow)
+      );
+      if (candidateConflict) {
+        return json({
+          error: `This candidate already has "${candidateConflict.round}" scheduled on ${newDate} at ${candidateConflict.time} — leave at least a ${MIN_GAP_MINUTES}-minute gap between sessions.`,
+        }, 409);
+      }
+
+      const interviewerConflict = sameDay.find(
+        iv => iv.interviewer === before.interviewer && isWithinGap(iv, newWindow)
+      );
+      if (interviewerConflict) {
+        return json({
+          error: `${before.interviewer} already has "${interviewerConflict.round}" scheduled on ${newDate} at ${interviewerConflict.time} — leave at least a ${MIN_GAP_MINUTES}-minute gap between their sessions.`,
+        }, 409);
+      }
+    }
 
     // Completion is judged from what the interviewer actually observed — the
     // analysis (and every score/recommendation derived from it) is computed
@@ -85,6 +125,18 @@ export const PUT: APIRoute = async ({ params, request }) => {
         type: 'interview',
         action: 'interview_status_changed',
         message: `"${iv.round}" interview for ${(iv.candidateId as any)?.name || 'a candidate'} marked ${body.status}${verdictNote}`,
+        entityType: 'interview',
+        entityId: iv._id.toString(),
+        jobId: (iv.jobId as any)?._id?.toString() || '',
+        candidateId: (iv.candidateId as any)?._id?.toString() || '',
+      });
+    }
+
+    if (reschedulingNow) {
+      await logActivity({
+        type: 'interview',
+        action: 'interview_rescheduled',
+        message: `"${iv.round}" interview for ${(iv.candidateId as any)?.name || 'a candidate'} rescheduled from ${before.date} ${before.time} to ${iv.date} ${iv.time}`,
         entityType: 'interview',
         entityId: iv._id.toString(),
         jobId: (iv.jobId as any)?._id?.toString() || '',

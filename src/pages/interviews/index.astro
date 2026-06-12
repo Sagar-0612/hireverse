@@ -4,6 +4,7 @@ import { connectDB } from "../../db/connection";
 import { Interview } from "../../db/models/Interview";
 import { findStage } from "../../lib/pipeline";
 import { scoreBadgeClass } from "../../lib/scoreColor";
+import { isOverdue } from "../../lib/scheduling";
 
 await connectDB();
 const rawInterviews = await Interview.find()
@@ -33,6 +34,7 @@ const interviews = rawInterviews.map(iv => {
     jobTitle: job?.title || '',
     stageLabel: stage?.label || '',
     stageColor: stage?.color || '#6b7280',
+    overdue: isOverdue(iv.date, iv.time, iv.status === 'scheduled'),
   };
 });
 
@@ -40,6 +42,7 @@ const today = new Date().toISOString().split('T')[0];
 const scheduled = interviews.filter(iv => iv.status === 'scheduled');
 const completed = interviews.filter(iv => iv.status === 'completed');
 const upcoming = interviews.filter(iv => iv.date >= today && iv.status === 'scheduled');
+const overdueCount = interviews.filter(iv => iv.overdue).length;
 
 const uniqueJobs = [...new Set(interviews.map(iv => iv.jobTitle).filter(Boolean))].sort();
 const uniqueInterviewers = [...new Set(interviews.map(iv => iv.interviewer).filter(Boolean))].sort();
@@ -65,6 +68,7 @@ const uniqueInterviewers = [...new Set(interviews.map(iv => iv.interviewer).filt
     <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Scheduled</div><div class="stat-value" style="font-size:22px;color:#3b82f6;">{scheduled.length}</div></div>
     <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Completed</div><div class="stat-value" style="font-size:22px;color:#10b981;">{completed.length}</div></div>
     <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Upcoming</div><div class="stat-value" style="font-size:22px;">{upcoming.length}</div></div>
+    <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Overdue</div><div class="stat-value" style="font-size:22px;color:#ef4444;">{overdueCount}</div></div>
   </div>
 
   <!-- Filters — applied across all tabs via client-side JS -->
@@ -122,6 +126,7 @@ const uniqueInterviewers = [...new Set(interviews.map(iv => iv.interviewer).filt
               <div style="font-size:13px;color:var(--fg-body);display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
                 {iv.jobTitle} · {iv.round}
                 {iv.stageLabel && <span class="badge" style={`font-size:10px;background:${iv.stageColor}22;color:${iv.stageColor};border:1px solid ${iv.stageColor}55;`}>{iv.stageLabel}</span>}
+                {iv.overdue && <span class="badge badge-error" style="font-size:10px;">Overdue</span>}
               </div>
               <div style="font-size:12px;color:var(--fg-mute);margin-top:2px;">{iv.time} · {iv.duration} min · {iv.interviewer} · {iv.format}</div>
             </div>
@@ -208,6 +213,7 @@ const uniqueInterviewers = [...new Set(interviews.map(iv => iv.interviewer).filt
                 <td><span class="badge badge-neutral" style="font-size:11px;">{iv.format}</span></td>
                 <td>
                   <span class={`badge ${iv.status === 'completed' ? 'badge-success' : iv.status === 'scheduled' ? 'badge-info' : iv.status === 'cancelled' ? 'badge-error' : 'badge-warning'}`}>{iv.status}</span>
+                  {iv.overdue && <span class="badge badge-error" style="font-size:10px;margin-left:4px;">Overdue</span>}
                 </td>
                 <td><a href={`/interviews/${iv.id}`} class="btn btn-ghost btn-sm">View →</a></td>
               </tr>

@@ -1,0 +1,418 @@
+---
+import AppLayout from "../layouts/AppLayout.astro";
+
+interface FaqItem {
+  q: string;
+  a: string; // HTML allowed
+  video?: string; // short description of what the walkthrough would show
+}
+
+interface FaqCategory {
+  id: string;
+  label: string;
+  icon: string;
+  items: FaqItem[];
+}
+
+const categories: FaqCategory[] = [
+  {
+    id: "getting-started",
+    label: "Getting Started",
+    icon: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>`,
+    items: [
+      {
+        q: "What is HireVerse and what can it do?",
+        a: `HireVerse is an AI-assisted Applicant Tracking System (ATS). It helps you:
+        <ul>
+          <li>Create jobs with a fully <strong>customizable hiring pipeline</strong> (Applied → Resume Screen → Coding Test → Written Assessment → Interviews → Offer, etc.)</li>
+          <li>Automatically <strong>analyze resumes</strong> against a job's requirements — extracting name, contact info, skills, experience, and a fit score</li>
+          <li><strong>Schedule and track interviews and assessments</strong>, with conflict detection, due dates, overdue alerts, and rescheduling</li>
+          <li><strong>Evaluate written/coding assessments</strong> and interview transcripts using AI-assisted scoring</li>
+          <li>View <strong>analytics</strong> across your pipeline, and keep a full <strong>activity log / audit trail</strong> of everything that happens to a candidate</li>
+        </ul>`,
+        video: "A 90-second tour of the Dashboard, sidebar navigation, and the four core sections: Jobs, Candidates, Interviews, and Assessments.",
+      },
+      {
+        q: "What does the Dashboard show me?",
+        a: `The Dashboard is your home base. It shows headline numbers (open jobs, total candidates, interviews this week, pending assessments), a feed of recent activity across the whole platform, and quick links into jobs that need attention. Use it as your daily "what changed since I last looked" view.`,
+        video: "Walkthrough of reading the Dashboard stat cards and recent activity feed, and jumping from an activity entry straight to the related candidate or job.",
+      },
+      {
+        q: "How is the platform organized?",
+        a: `Everything revolves around <strong>Jobs</strong>. Each job has its own <strong>pipeline</strong> (an ordered list of stages) and its own list of <strong>candidates</strong>, each sitting in exactly one stage at a time. From a candidate's stage, the system knows whether an <strong>Interview</strong> or <strong>Assessment</strong> needs to be scheduled next. <strong>Analytics</strong> aggregates across all jobs, and <strong>Team</strong> / <strong>Settings</strong> control who's using the platform and how it's configured.`,
+      },
+    ],
+  },
+  {
+    id: "jobs",
+    label: "Jobs & Pipelines",
+    icon: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="2" y="5" width="12" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5 5V4a3 3 0 0 1 6 0v1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
+    items: [
+      {
+        q: "How do I create a new job?",
+        a: `Go to <strong>Jobs → Create Job</strong>. Fill in the title, department, location, level, required skills, nice-to-have skills, and education requirements — these fields drive the AI resume scoring, so the more specific you are, the more accurate the candidate match scores will be. You'll also choose or customize the hiring <strong>pipeline</strong> for this job.`,
+      },
+      {
+        q: "Can each job have a different pipeline (stages)?",
+        a: `Yes — pipelines are <strong>per-job and fully configurable</strong>. A typical pipeline might be: Applied → Resume Screen → Coding Test → Written Assessment → Technical Interview → Final Interview → Offer → Hired, but you can add, remove, reorder, rename, recolor, and re-icon stages from <strong>Jobs → [Job] → Edit → Pipeline</strong>. The system automatically detects which stages are "assessment" stages (anything with "test", "assessment", "coding", or "written" in the name) and which are "interview" stages, so scheduling and overdue logic work correctly no matter how you name your stages.`,
+        video: "Editing a job's pipeline: adding a new 'Written Assessment' stage between Coding Test and Technical Interview, reordering it, and saving.",
+      },
+      {
+        q: "How do candidates move between stages?",
+        a: `Open a candidate's profile and use the <strong>Move to Stage</strong> control to advance (or move back) a candidate. Every move is recorded in the candidate's <strong>stage history</strong> with who moved them, when, and any notes — this becomes your audit trail for that candidate's journey through the pipeline.
+        <br/><br/>
+        Note: in <strong>Jobs → [Job] → Candidates</strong>, the stage column is <strong>display-only</strong> (just a badge showing the current stage) — this is intentional, so stage changes always go through the candidate profile where the full history is recorded.`,
+      },
+      {
+        q: "What do the job statuses (Active, Interviewing, Closed, Archived) mean?",
+        a: `<strong>Active</strong> — open and accepting candidates. <strong>Interviewing</strong> — typically used once you have candidates in interview stages, useful for filtering. <strong>Closed</strong> — no longer hiring for this role, but kept for records. <strong>Archived</strong> — hidden from default views but fully retained, including all candidate history.`,
+      },
+    ],
+  },
+  {
+    id: "candidates",
+    label: "Candidates & Resumes",
+    icon: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M2 14c0-3.314 2.686-5 6-5s6 1.686 6 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
+    items: [
+      {
+        q: "How does resume analysis work?",
+        a: `When you upload a resume (PDF, DOCX, TXT, or Markdown), HireVerse extracts the candidate's <strong>name, email, phone, location, total experience, skills, education match, and key achievements</strong>, then compares them against the job's required and nice-to-have skills to compute a <strong>fit score</strong> and a recommendation (e.g. Strong Match, Possible Match, Weak Match). It also flags any <strong>skill gaps</strong> relative to the job requirements.
+        <br/><br/>
+        The parser is built to handle many resume formats and writing styles — plain prose, bulleted Markdown with headers, ALL-CAPS layouts, "Name: ..." labeled templates, and more — so scores stay reliable however a candidate's resume happens to be formatted.`,
+        video: "Uploading three resumes in different formats (plain text, Markdown with headers/bullets, all-caps) for the same job and comparing the resulting scores and extracted fields.",
+      },
+      {
+        q: "What does the candidate fit score actually measure?",
+        a: `The score blends <strong>required-skill coverage</strong> (weighted most heavily), <strong>nice-to-have skill coverage</strong>, <strong>experience level vs. the job's level</strong>, and <strong>education match</strong>. A high score means the resume's content closely lines up with what the job description asks for — it's a starting signal for prioritization, not a final hiring decision.`,
+      },
+      {
+        q: "What if the system gets a candidate's name, location, or experience wrong?",
+        a: `You can always edit a candidate's details directly from their profile. If you notice a resume format that consistently confuses the parser, that's valuable feedback — diverse formats (Markdown resumes, ALL-CAPS resumes, "Name:"-labeled templates, etc.) are specifically tested against to keep extraction accurate, but no parser is perfect for every layout.`,
+      },
+      {
+        q: "Why can't I see a stage-change dropdown in the Jobs → Candidates table anymore?",
+        a: `That table now shows the candidate's <strong>current stage as a read-only badge</strong>. To change a candidate's stage, open their profile and use the dedicated <strong>Move to Stage</strong> action — this ensures every stage change is properly logged in the candidate's history and triggers any related scheduling logic (e.g. creating an assessment when moving into an assessment stage).`,
+      },
+    ],
+  },
+  {
+    id: "interviews",
+    label: "Interviews",
+    icon: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5" width="13" height="12" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M1.5 6.5h13" stroke="currentColor" stroke-width="1.5"/><path d="M5 1v3M11 1v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
+    items: [
+      {
+        q: "How do I schedule an interview?",
+        a: `From a candidate's profile (or the Interviews section), choose <strong>Schedule Interview</strong>, pick the round/type, date, time, duration, and interviewer. The system checks for <strong>double-booking</strong> — if the candidate or interviewer already has another session too close in time (within the minimum gap), it blocks the save and tells you exactly which existing session conflicts and at what time, so you can pick a different slot.`,
+        video: "Scheduling an interview, triggering a conflict warning by picking a clashing time, then resolving it by choosing a free slot.",
+      },
+      {
+        q: "What happens if an interview's scheduled time passes with nothing recorded?",
+        a: `The interview is automatically flagged as <strong>Overdue</strong> — you'll see an "Overdue" badge on the interview, on the candidate's record, and in the Interviews list/stat cards. This makes it easy to spot interviews that were scheduled but never followed up on (no feedback entered, no status change), so nothing falls through the cracks.`,
+      },
+      {
+        q: "How do I record interview feedback, and what does the AI analysis do?",
+        a: `Open the interview, mark it <strong>Completed</strong>, and enter your feedback (and optionally a transcript). The system requires at least a sentence or two of real feedback — it won't let you submit an empty completion. From that feedback (and transcript, if provided), it computes <strong>communication, technical, and confidence scores</strong>, a <strong>recommendation</strong> (e.g. Strong Hire / Hire / No Hire), and a written <strong>reasoning summary</strong> highlighting strengths and concerns — all grounded in what you actually wrote, never invented from nothing.`,
+      },
+      {
+        q: "Can I reschedule an interview? Does it re-check for conflicts?",
+        a: `Yes. Open the interview and click <strong>Reschedule</strong> (available for any interview that's still <em>scheduled</em> or <em>rescheduled</em> — not for completed/cancelled ones). Pick a new date/time; the same double-booking check used at creation time runs again, so a reschedule can't silently collide with another session. Once saved, the change — old time → new time — is recorded in the activity log for full traceability.`,
+        video: "Rescheduling an interview from an overdue slot to a new date/time, and viewing the resulting 'rescheduled from ... to ...' entry in the activity log.",
+      },
+    ],
+  },
+  {
+    id: "assessments",
+    label: "Assessments",
+    icon: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M5 2h6v2H5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><rect x="3" y="4" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 8l1.5 1.5L9.5 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    items: [
+      {
+        q: "How do I create an assessment for a candidate?",
+        a: `Go to <strong>Assessments → Create Assessment</strong> (or trigger it from a candidate moving into an assessment-type stage like "Coding Test" or "Written Assessment"). Choose the candidate, the pipeline stage/round, and assessment type (coding or written). The system can auto-suggest relevant questions based on the candidate's experience level and the job's required/practical skills.`,
+      },
+      {
+        q: "Can I set a deadline for an assessment? Where do I see it?",
+        a: `Yes — when creating (or later editing) an assessment, set an optional <strong>Due Date</strong> and <strong>Due Time</strong>. The deadline appears on the assessment's detail page as a "Due" stat, and on the Assessments list alongside each pending/submitted item, so candidates and reviewers always know the timeline.`,
+      },
+      {
+        q: "What happens if an assessment's due date passes and nothing was submitted?",
+        a: `It's automatically marked <strong>Overdue</strong> with a visible badge — on the assessment itself, in the Assessments list, and in the relevant stat counts. This applies only while the assessment is still pending (an evaluated/submitted assessment is never shown as overdue), so you can quickly see which candidates missed their deadline and decide whether to follow up or reschedule.`,
+      },
+      {
+        q: "Can a coding or written assessment deadline be rescheduled?",
+        a: `Yes. From the assessment's detail page, click <strong>Reschedule Due Date</strong> (or <strong>Set Due Date</strong> if none was set yet), pick a new date/time, and save. The change — including the previous deadline — is written to the activity log, so there's a clear record of why and when a deadline moved.`,
+        video: "Opening an overdue 'Coding Test' assessment, rescheduling its due date to a future date/time, and seeing the Overdue badge disappear.",
+      },
+      {
+        q: "Does 'Mark as Submitted' check that the candidate actually wrote something?",
+        a: `Yes — an assessment can only be marked as submitted if it actually contains a non-empty answer. Empty submissions are rejected rather than silently being recorded as "submitted", so the Current Assessments view always reflects genuinely completed work.`,
+      },
+      {
+        q: "How does evaluation/analysis work, and why did the question dropdown look broken before?",
+        a: `On the <strong>Evaluate & Analyze</strong> screen, you select which question you're scoring from a dropdown. Long question text now wraps properly inside the selector instead of overflowing outside the popup — the dropdown was rebuilt as a custom widget specifically so long "Question Asked" text stays fully readable and contained. After selecting a question, AI-assisted analysis scores the response against the job's expectations and the question's intent.`,
+      },
+    ],
+  },
+  {
+    id: "scheduling",
+    label: "Scheduling, Overdue & Rescheduling",
+    icon: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.5V8l2.5 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    items: [
+      {
+        q: "Where can I see everything that's overdue at a glance?",
+        a: `Both <strong>Interviews</strong> and <strong>Assessments</strong> list pages have a dedicated <strong>"Overdue"</strong> stat card showing the count, and every overdue item is badged inline wherever it appears — in lists, on its detail page, and in candidate views. "Overdue" simply means: the scheduled date/time (or due date/time) has passed, and the item is still in a pending/scheduled state with no outcome recorded yet.`,
+      },
+      {
+        q: "How does rescheduling work consistently across interviews and assessments?",
+        a: `Both follow the same pattern: a <strong>Reschedule</strong> button appears on items that are still pending/scheduled (not on completed/cancelled/evaluated ones). Reschedule opens a small dialog with date/time inputs pre-filled with the current schedule and a minimum date of today. Saving:
+        <ol>
+          <li>Re-runs any relevant conflict checks (for interviews — the same double-booking guard as scheduling)</li>
+          <li>Updates the record's date/time</li>
+          <li>Clears the "Overdue" state if the new time is in the future</li>
+          <li>Writes an activity log entry recording the old and new times, so there's always a paper trail</li>
+        </ol>`,
+      },
+      {
+        q: "Is there a minimum gap enforced between interviews?",
+        a: `Yes — when scheduling or rescheduling an interview, the system checks that the same candidate (and the same interviewer) don't have another session too close in time on the same day. If a conflict is found, you get a clear message naming the conflicting round and time so you can pick a different slot.`,
+      },
+    ],
+  },
+  {
+    id: "analytics",
+    label: "Analytics & Activity Log",
+    icon: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 12l3.5-4 3 2.5L12 5l2 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    items: [
+      {
+        q: "What can I see in Analytics?",
+        a: `Analytics aggregates data across all jobs: pipeline funnel/conversion between stages, time-to-hire trends, candidate volume by source/job, and assessment/interview outcomes. Use it to spot bottlenecks — e.g. a stage where candidates consistently stall, or a job that's taking unusually long to fill.`,
+      },
+      {
+        q: "What is the Activity Log and where do I find it?",
+        a: `Every meaningful action — a candidate moving stages, an interview being scheduled/completed/rescheduled, an assessment being created/evaluated/rescheduled — is recorded as an <strong>activity entry</strong> with a human-readable message, timestamp, and links back to the relevant job/candidate. The most recent entries surface on the Dashboard; the full history is attached to each candidate's profile.`,
+      },
+    ],
+  },
+  {
+    id: "team-settings",
+    label: "Team & Settings",
+    icon: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="5.5" cy="5" r="2.5" stroke="currentColor" stroke-width="1.5"/><circle cx="10.5" cy="5" r="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M1 14c0-2.485 2.015-4 4.5-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M9 14c0-2.485 1.015-4 3.5-4s4 1.515 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
+    items: [
+      {
+        q: "What's in the Team section?",
+        a: `Team lists everyone with access to your HireVerse workspace, their roles, and which jobs/activity they're associated with — useful for understanding who's responsible for moving a candidate forward.`,
+      },
+      {
+        q: "What can I configure in Settings?",
+        a: `Settings covers your <strong>profile</strong> (name, contact info, password), <strong>organization</strong> details, <strong>notification</strong> preferences, and <strong>theme & appearance</strong> (light/dark mode — also toggleable from the moon/sun icon in the top bar).`,
+      },
+    ],
+  },
+  {
+    id: "troubleshooting",
+    label: "Troubleshooting",
+    icon: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 5v3.5M8 11v.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
+    items: [
+      {
+        q: "I marked an assessment as submitted but it shows empty — is that possible?",
+        a: `No — submissions are validated before being accepted, so a submission with no actual answer content cannot be marked as "Submitted". If you see an assessment still showing "Pending", the candidate (or reviewer) needs to enter their answer first.`,
+      },
+      {
+        q: "An interview/assessment shows 'Overdue' even though it was just handled — what should I do?",
+        a: `Make sure the outcome was actually saved: for interviews, mark the status as <strong>Completed</strong> (with feedback) or <strong>Cancelled</strong>; for assessments, mark as <strong>Submitted</strong> and then evaluate it. The Overdue badge only clears once the item is no longer pending, or once its date/time is rescheduled into the future.`,
+      },
+      {
+        q: "I can't save a new interview time — it says there's a conflict.",
+        a: `This means either the candidate or the interviewer already has another session within the minimum required gap on that day. The error message names the conflicting round and its time — pick a slot that leaves enough room before/after that session, or reassign the interviewer.`,
+      },
+      {
+        q: "Search isn't returning results, or shows 'Search is unavailable right now'.",
+        a: `The global search (top bar) queries jobs and candidates live. A transient "unavailable" message usually means a momentary network/API hiccup — try again in a few seconds. If it persists, refresh the page.`,
+      },
+    ],
+  },
+];
+
+const totalCount = categories.reduce((sum, c) => sum + c.items.length, 0);
+---
+
+<AppLayout title="Help & FAQ" activeNav="faq">
+  <div style="margin-bottom:24px;">
+    <h1 style="font-size:24px;font-weight:600;color:var(--fg);letter-spacing:-0.5px;margin:0 0 4px;">Help & FAQ</h1>
+    <p style="font-size:14px;color:var(--fg-mute);margin:0;">{totalCount} answers covering everything HireVerse can do — search or browse by topic.</p>
+  </div>
+
+  <!-- Search -->
+  <div class="search-wrap" style="max-width:480px;margin-bottom:20px;">
+    <span class="search-icon"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"><circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.5"/><path d="M9 9l2.5 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+    <input id="faq-search" type="text" class="input search-input" placeholder="Search the FAQ — e.g. 'reschedule', 'overdue', 'resume score'…" autocomplete="off" />
+  </div>
+
+  <!-- Category pills -->
+  <div id="faq-categories" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:24px;">
+    <button class="btn btn-secondary faq-pill active" data-cat="all" style="font-size:12px;padding:6px 12px;">All Topics</button>
+    {categories.map(cat => (
+      <button class="btn btn-secondary faq-pill" data-cat={cat.id} style="font-size:12px;padding:6px 12px;display:flex;align-items:center;gap:6px;">
+        <span set:html={cat.icon} style="opacity:0.7;display:flex;" />
+        {cat.label}
+      </button>
+    ))}
+  </div>
+
+  <div id="faq-empty" style="display:none;text-align:center;padding:48px 16px;color:var(--fg-mute);font-size:14px;">
+    No FAQ entries match your search — try a different term, or browse a topic above.
+  </div>
+
+  <!-- FAQ sections -->
+  <div style="display:flex;flex-direction:column;gap:28px;">
+    {categories.map(cat => (
+      <section class="faq-section" data-cat={cat.id}>
+        <h2 style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--fg-mute);text-transform:uppercase;letter-spacing:0.04em;font-family:'JetBrains Mono',monospace;margin:0 0 12px;">
+          <span set:html={cat.icon} style="opacity:0.7;display:flex;" />
+          {cat.label}
+        </h2>
+        <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
+          {cat.items.map((item, i) => (
+            <div class={`faq-item ${i < cat.items.length - 1 ? "faq-item-border" : ""}`} data-q={item.q.toLowerCase()} data-a={item.a.replace(/<[^>]+>/g, " ").toLowerCase()}>
+              <button class="faq-question" type="button">
+                <span style="text-align:left;">{item.q}</span>
+                <svg class="faq-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;transition:transform 0.15s ease;"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <div class="faq-answer">
+                <div class="faq-answer-inner">
+                  <div set:html={item.a} style="font-size:13px;line-height:1.7;color:var(--fg-body);" />
+                  {item.video && (
+                    <div style="margin-top:14px;display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px dashed var(--border-strong);border-radius:var(--radius-md);background:var(--bg-soft-2);">
+                      <div style="width:32px;height:32px;border-radius:50%;background:var(--card-bg);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                        <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M3 2.5v11l10-5.5z" fill="currentColor"/></svg>
+                      </div>
+                      <div style="min-width:0;">
+                        <div style="font-size:12px;font-weight:500;color:var(--fg);">Video walkthrough — coming soon</div>
+                        <div style="font-size:12px;color:var(--fg-mute);margin-top:2px;">{item.video}</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    ))}
+  </div>
+</AppLayout>
+
+<style>
+  .faq-pill.active {
+    background: var(--fg);
+    color: var(--bg);
+    border-color: var(--fg);
+  }
+  .faq-item-border {
+    border-bottom: 1px solid var(--border);
+  }
+  .faq-question {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 18px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--fg);
+    text-align: left;
+    font-family: inherit;
+  }
+  .faq-question:hover {
+    background: var(--bg-soft-2);
+  }
+  .faq-answer {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 0.2s ease;
+  }
+  .faq-answer-inner {
+    overflow: hidden;
+    padding: 0 18px;
+  }
+  .faq-item.open .faq-answer {
+    grid-template-rows: 1fr;
+  }
+  .faq-item.open .faq-answer-inner {
+    padding: 0 18px 16px;
+  }
+  .faq-item.open .faq-chevron {
+    transform: rotate(180deg);
+  }
+  .faq-answer-inner :global(ul),
+  .faq-answer-inner :global(ol) {
+    margin: 8px 0 0;
+    padding-left: 20px;
+  }
+  .faq-answer-inner :global(li) {
+    margin-bottom: 4px;
+  }
+  .faq-answer-inner :global(strong) {
+    color: var(--fg);
+  }
+</style>
+
+<script>
+  const searchInput = document.getElementById("faq-search") as HTMLInputElement | null;
+  const pills = Array.from(document.querySelectorAll<HTMLButtonElement>(".faq-pill"));
+  const sections = Array.from(document.querySelectorAll<HTMLElement>(".faq-section"));
+  const emptyState = document.getElementById("faq-empty");
+
+  let activeCat = "all";
+
+  function applyFilters() {
+    const query = (searchInput?.value || "").trim().toLowerCase();
+    let anyVisible = false;
+
+    for (const section of sections) {
+      const sectionCat = section.dataset.cat || "";
+      const catMatches = activeCat === "all" || activeCat === sectionCat;
+      let sectionHasMatch = false;
+
+      const items = Array.from(section.querySelectorAll<HTMLElement>(".faq-item"));
+      for (const item of items) {
+        const text = `${item.dataset.q || ""} ${item.dataset.a || ""}`;
+        const queryMatches = !query || text.includes(query);
+        const visible = catMatches && queryMatches;
+        item.style.display = visible ? "" : "none";
+        if (visible) sectionHasMatch = true;
+        // Auto-expand matches when actively searching; collapse when query cleared.
+        if (query && queryMatches) {
+          item.classList.add("open");
+        } else if (!query) {
+          item.classList.remove("open");
+        }
+      }
+
+      section.style.display = sectionHasMatch ? "" : "none";
+      if (sectionHasMatch) anyVisible = true;
+    }
+
+    if (emptyState) emptyState.style.display = anyVisible ? "none" : "";
+  }
+
+  searchInput?.addEventListener("input", applyFilters);
+
+  for (const pill of pills) {
+    pill.addEventListener("click", () => {
+      activeCat = pill.dataset.cat || "all";
+      for (const p of pills) p.classList.toggle("active", p === pill);
+      applyFilters();
+    });
+  }
+
+  for (const item of document.querySelectorAll<HTMLElement>(".faq-item")) {
+    const btn = item.querySelector(".faq-question");
+    btn?.addEventListener("click", () => {
+      item.classList.toggle("open");
+    });
+  }
+</script>

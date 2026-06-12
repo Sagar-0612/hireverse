@@ -15,6 +15,11 @@ export interface AssessmentAnalysisInput {
   testsTotal: number;
   candidateName: string;
   jobTitle: string;
+  // The actual question/task given to the candidate — either one of the
+  // server-suggested questions or a custom one the interviewer typed in.
+  // Lets scoring check the answer against what was actually asked, rather
+  // than just scanning the submission/notes in isolation.
+  questionAsked: string;
 }
 
 export interface AssessmentAnalysisResult {
@@ -100,6 +105,44 @@ function submissionHeuristics(submission: string, type: AssessmentType): { score
   return { score: bonus, notes };
 }
 
+// ── Question-relevance check ─────────────────────────────────────────────────
+// Compares the response (submission + notes) against the question that was
+// actually assigned, so scoring reflects whether the candidate answered THIS
+// question rather than just producing plausible-sounding text in general.
+
+const STOPWORDS = new Set([
+  'the', 'and', 'that', 'with', 'from', 'this', 'your', 'have', 'will',
+  'into', 'using', 'each', 'their', 'should', 'would', 'could', 'about',
+  'which', 'where', 'when', 'while', 'than', 'then', 'them', 'they', 'what',
+  'write', 'design', 'implement', 'given', 'returns', 'return', 'function',
+]);
+
+function keyTerms(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 3 && !STOPWORDS.has(w))
+  );
+}
+
+function questionRelevance(questionAsked: string, response: string): { ratio: number; hasQuestion: boolean } {
+  const q = (questionAsked || '').trim();
+  const r = (response || '').trim();
+  if (!q || !r) return { ratio: 0, hasQuestion: !!q };
+
+  const qTerms = keyTerms(q);
+  if (qTerms.size === 0) return { ratio: 0, hasQuestion: true };
+
+  const rTerms = keyTerms(r);
+  let hits = 0;
+  for (const term of qTerms) {
+    if (rTerms.has(term)) hits++;
+  }
+  return { ratio: hits / qTerms.size, hasQuestion: true };
+}
+
 // ── Signal scanning ───────────────────────────────────────────────────────────
 
 function scanSignals(text: string, signals: Signal[]): { net: number; hits: { label: string; positive: boolean }[] } {
@@ -162,6 +205,13 @@ function buildReasoning(input: AssessmentAnalysisInput, scores: { cq: number; al
 
   parts.push(`Analysed ${input.candidateName}'s "${input.round}" ${typeLabel} for "${input.jobTitle}". Overall signal: ${tier(overall)} (${overall}/100).`);
 
+  if (input.questionAsked.trim()) {
+    const truncated = input.questionAsked.trim().length > 160
+      ? `${input.questionAsked.trim().slice(0, 160)}…`
+      : input.questionAsked.trim();
+    parts.push(`Question assigned: "${truncated}"`);
+  }
+
   if (input.type === 'coding') {
     parts.push(`Code quality: ${tier(cq)} (${cq}/100). Algorithm / correctness: ${tier(alg)} (${alg}/100). Problem-solving approach: ${tier(ps)} (${ps}/100).`);
     if (input.testsTotal > 0) {
@@ -206,6 +256,21 @@ export function analyzeAssessment(input: AssessmentAnalysisInput): AssessmentAna
   }
   let problemSolvingScore = scoreFromNet(psSig.net);
 
+  // Score the response against the question that was actually assigned —
+  // a polished submission that ignores the assigned question shouldn't
+  // score as if it answered it.
+  const relevance = questionRelevance(input.questionAsked, combined);
+  const relevanceHits: { label: string; positive: boolean }[] = [];
+  if (relevance.hasQuestion) {
+    if (relevance.ratio >= 0.4) {
+      problemSolvingScore += 10;
+      relevanceHits.push({ label: 'response directly addresses the assigned question', positive: true });
+    } else if (relevance.ratio < 0.15 && submission) {
+      problemSolvingScore -= 15;
+      relevanceHits.push({ label: 'response does not appear to address the assigned question', positive: false });
+    }
+  }
+
   // Clamp all scores
   codeQualityScore = Math.max(5, Math.min(98, codeQualityScore));
   algorithmScore = Math.max(5, Math.min(98, algorithmScore));
@@ -219,7 +284,7 @@ export function analyzeAssessment(input: AssessmentAnalysisInput): AssessmentAna
   const recommendation = getRecommendation(overallScore);
   const decision: 'advance' | 'hold' = overallScore >= 60 ? 'advance' : 'hold';
 
-  const allHits = [...cqSig.hits, ...algSig.hits, ...psSig.hits, ...subHeuristic.notes.map(n => ({ label: n, positive: true }))];
+  const allHits = [...cqSig.hits, ...algSig.hits, ...psSig.hits, ...relevanceHits, ...subHeuristic.notes.map(n => ({ label: n, positive: true }))];
   const strengths = allHits.filter(h => h.positive).map(h => h.label);
   const concerns  = allHits.filter(h => !h.positive).map(h => h.label);
 

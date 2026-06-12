@@ -298,6 +298,46 @@ const BANK: Record<string, string[]> = {
     "Describe a time your initial analysis was wrong or misleading — how did you catch it?",
     "How would you communicate a counter-intuitive finding to non-technical stakeholders?",
   ],
+  cicd: [
+    "What is a CI/CD pipeline, and what problem does it solve compared to manually building and deploying?",
+    "Walk me through the stages of a pipeline you've set up — build, test, deploy — and what runs at each stage.",
+    "How do you handle secrets and environment-specific configuration in a pipeline?",
+    "How would you set up a pipeline so a failing test blocks a deploy but a flaky test doesn't block every release?",
+    "Describe a bad deploy you've been part of — what went wrong, and what changed in the pipeline afterward?",
+    "How would you design a pipeline that supports rolling back a bad release quickly and safely?",
+  ],
+  terraform: [
+    "What problem does infrastructure-as-code solve compared to provisioning resources manually?",
+    "Walk me through the Terraform workflow — init, plan, apply — and what each step actually does.",
+    "What's Terraform state, and why does it matter (especially with a team)?",
+    "How do you structure Terraform code for multiple environments (dev/staging/prod) without duplicating everything?",
+    "Describe a time `terraform apply` did something unexpected — how did you diagnose and recover from it?",
+    "How would you safely make a breaking change to a shared module used across many environments?",
+  ],
+  kafka: [
+    "What is Kafka used for, and how does a topic/partition/consumer group fit together?",
+    "Walk me through how a producer and consumer interact with a topic in something you've built.",
+    "How does Kafka provide ordering guarantees, and what are the limits of that guarantee?",
+    "How would you handle a consumer that's falling behind (lag) on a high-throughput topic?",
+    "Describe a data-consistency or duplicate-message issue you've run into with Kafka and how you handled it.",
+    "How would you design a Kafka-based system to be resilient to a broker failure?",
+  ],
+  figma: [
+    "Walk me through your design process from a rough idea to a hand-off-ready Figma file.",
+    "How do you use components and variants in Figma to keep a design system consistent?",
+    "How do you structure a Figma file (pages, frames, naming) so developers can find what they need?",
+    "Describe how you've collaborated with engineers during hand-off — specs, redlines, or dev mode.",
+    "Tell me about a time user feedback or testing changed a design significantly after you'd already built it out.",
+    "How would you design and maintain a scalable design system used across multiple products/teams?",
+  ],
+  'mobile development': [
+    "What are the key differences between building for mobile vs. web that have shaped how you approach a feature?",
+    "Walk me through the architecture of a mobile app you've built — navigation, state management, networking.",
+    "How do you handle different screen sizes, orientations, and platform differences (iOS vs. Android)?",
+    "How do you manage offline support and data syncing in a mobile app?",
+    "Describe a performance issue (slow startup, jank, memory) you've debugged on a mobile app and how you fixed it.",
+    "How would you structure a mobile app's release process — versioning, staged rollouts, crash monitoring?",
+  ],
 };
 
 // Aliases — different names for the same underlying topic.
@@ -330,6 +370,51 @@ const ALIASES: Record<string, string> = {
   'test-driven development': 'testing',
   tdd: 'testing',
   'qa testing': 'testing',
+  // Common alternate spellings/phrasings for skills already in the bank — a
+  // JD or resume listing "React JS", "Node JS", "Next JS" etc. previously
+  // fell through to the generic fallback questions because none of these
+  // exact strings (post dot-stripping) matched a BANK key.
+  reactjs: 'react',
+  'react js': 'react',
+  nodejs: 'nodejs',
+  'node js': 'nodejs',
+  node: 'nodejs',
+  nextjs: 'nextjs',
+  'next js': 'nextjs',
+  next: 'nextjs',
+  'amazon web services': 'aws',
+  'restful api': 'rest api',
+  'restful apis': 'rest api',
+  k8s: 'kubernetes',
+  // ML library names commonly listed as standalone "skills" — reuse the
+  // machine-learning ladder rather than the generic fallback.
+  tensorflow: 'machine learning',
+  pytorch: 'machine learning',
+  'scikit-learn': 'machine learning',
+  scikitlearn: 'machine learning',
+  keras: 'machine learning',
+  // CI/CD tooling — distinct tools, same underlying ladder.
+  jenkins: 'cicd',
+  'github actions': 'cicd',
+  'gitlab ci': 'cicd',
+  'gitlab ci/cd': 'cicd',
+  'ci/cd': 'cicd',
+  // Infra-as-code tooling.
+  ansible: 'terraform',
+  // Design tooling — same underlying design-process ladder.
+  'uiux design': 'figma',
+  'ui/ux design': 'figma',
+  'ui ux design': 'figma',
+  'adobe xd': 'figma',
+  sketch: 'figma',
+  // Mobile platforms/frameworks — same underlying mobile-dev ladder.
+  swift: 'mobile development',
+  kotlin: 'mobile development',
+  flutter: 'mobile development',
+  dart: 'mobile development',
+  android: 'mobile development',
+  ios: 'mobile development',
+  'react native': 'mobile development',
 };
 
 const normalize = (s: string) => s.toLowerCase().replace(/\./g, '').trim();

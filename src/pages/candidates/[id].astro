@@ -4,7 +4,7 @@ import { connectDB } from "../../db/connection";
 import { Candidate } from "../../db/models/Candidate";
 import { Interview } from "../../db/models/Interview";
 import { Types } from "mongoose";
-import { sortedPipeline, getValidNextStages, findStage, getIconSvg, isHiredStage, hasUpcomingInterviewStage, hasUpcomingAssessmentStage } from "../../lib/pipeline";
+import { sortedPipeline, getValidNextStages, findStage, getIconSvg, isHiredStage, getCandidateStageActions, type StageRecordStatus } from "../../lib/pipeline";
 import { buildCandidateSummary } from "../../lib/candidateSummary";
 import { formatExperience } from "../../lib/resumeAnalysis";
 import { Assessment } from "../../db/models/Assessment";
@@ -24,11 +24,29 @@ const validStages = getValidNextStages(pipeline, raw.currentStage);
 // round" nor "reject" are sensible actions left to offer.
 const isHired = !raw.rejected && isHiredStage(pipeline, raw.currentStage);
 const canScheduleOrReject = !raw.rejected && !isHired;
-const canScheduleInterview = canScheduleOrReject && hasUpcomingInterviewStage(pipeline, raw.currentStage);
-const canScheduleAssessment = canScheduleOrReject && hasUpcomingAssessmentStage(pipeline, raw.currentStage);
 
 const interviewDocs = await Interview.find({ candidateId: id }).sort({ date: 1, time: 1 }).lean();
 const assessmentDocs = await Assessment.find({ candidateId: id }).sort({ createdAt: 1 }).lean();
+
+// Per-stage record status — feeds getCandidateStageActions so only the
+// action relevant to the candidate's actual current stage in the pipeline
+// is offered, never both at once. A cancelled interview doesn't block
+// re-scheduling, so it's treated as if it never happened.
+const interviewStatusForStage = (stageKey: string): StageRecordStatus => {
+  const docs = interviewDocs.filter(iv => iv.pipelineStage === stageKey && iv.status !== 'cancelled');
+  if (!docs.length) return 'none';
+  return docs.some(iv => iv.status === 'completed') ? 'done' : 'pending';
+};
+const assessmentStatusForStage = (stageKey: string): StageRecordStatus => {
+  const docs = assessmentDocs.filter(a => a.pipelineStage === stageKey);
+  if (!docs.length) return 'none';
+  return docs.some(a => a.status === 'evaluated') ? 'done' : 'pending';
+};
+const stageActions = canScheduleOrReject
+  ? getCandidateStageActions(pipeline, raw.currentStage, interviewStatusForStage, assessmentStatusForStage)
+  : { canScheduleInterview: false, canScheduleAssessment: false };
+const canScheduleInterview = stageActions.canScheduleInterview;
+const canScheduleAssessment = stageActions.canScheduleAssessment;
 
 // The most recent human-written stage-move remark — auto-advance notes are
 // system-generated filler, not a recruiter's actual read, so they're excluded.
@@ -200,7 +218,9 @@ const skillStatus = skillsToShow.map((skill: string) => {
           {summary.roundsConsidered > 0 && <span style="font-size:11px;color:var(--fg-mute);font-weight:400;text-transform:none;letter-spacing:0;font-family:inherit;">· based on resume + {summary.roundsConsidered} completed interview{summary.roundsConsidered === 1 ? '' : 's'}</span>}
         </h2>
         <div style="background:var(--bg-soft);border-radius:6px;padding:16px;border-left:3px solid var(--fg);margin-bottom:16px;">
-          <p style="font-size:14px;color:var(--fg-body);line-height:1.6;margin:0;max-height:220px;overflow-y:auto;padding-right:8px;">{summary.narrative}</p>
+          <ul style="font-size:14px;color:var(--fg-body);line-height:1.6;margin:0;padding-left:18px;max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;">
+            {summary.narrative.map(point => <li>{point}</li>)}
+          </ul>
         </div>
 
         {summary.roundBreakdown.length > 0 && (
@@ -360,6 +380,7 @@ const skillStatus = skillsToShow.map((skill: string) => {
           {canScheduleInterview && <a href={`/interviews/schedule?candidate=${candidate.id}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">Schedule Interview</a>}
           {canScheduleAssessment && <a href={`/assessments/create?candidate=${candidate.id}`} class="btn btn-secondary" style="width:100%;border-radius:6px;">Create Assessment</a>}
           {canScheduleOrReject && <button id="reject-btn" class="btn btn-ghost" style="width:100%;color:#ef4444;">Reject Candidate</button>}
+          {candidate.rejected && <button id="unreject-btn" class="btn btn-ghost" style="width:100%;">Undo Rejection</button>}
           <button id="delete-btn" class="btn btn-ghost" style="width:100%;color:#ee0000;">Delete Candidate</button>
         </div>
       </div>
@@ -388,24 +409,46 @@ const skillStatus = skillsToShow.map((skill: string) => {
       select.value = previousStage;
       return;
     }
-    const res = await fetch(`/api/candidates/${candidateId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ currentStage, notes }),
-    });
-    if (res.ok) {
-      window.location.reload();
-    } else {
+    const move = async (extra = {}) => {
+      const res = await fetch(`/api/candidates/${candidateId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentStage, notes, ...extra }),
+      });
+      if (res.ok) {
+        window.location.reload();
+        return;
+      }
       const err = await res.json().catch(() => ({}));
+      // The backend deliberately blocks moving a candidate past an
+      // interview/assessment gate stage with no analyzed result on file —
+      // but a recruiter may know that's fine (e.g. backfilling history) and
+      // needs a way to say "move them anyway" without leaving the UI.
+      if (res.status === 409 && err.requiresConfirmation) {
+        const proceed = await window.hvConfirm({
+          title: 'Move anyway?',
+          message: err.error,
+          confirmLabel: 'Move anyway',
+          destructive: false,
+        });
+        if (proceed) {
+          const confirmFlag = err.code === 'NO_ANALYZED_ASSESSMENT' ? 'confirmSkipAssessment' : 'confirmSkipInterview';
+          await move({ [confirmFlag]: true });
+          return;
+        }
+        select.value = previousStage;
+        return;
+      }
       window.hvToast(err.error || 'Failed to update stage', 'error');
       select.value = previousStage;
-    }
+    };
+    await move();
   });
 
   document.getElementById('reject-btn')?.addEventListener('click', async () => {
     const ok = await window.hvConfirm({
       title: 'Reject candidate',
-      message: 'Reject this candidate? This is a terminal action and cannot be undone.',
+      message: 'Reject this candidate? This can be undone later from this page if needed.',
       confirmLabel: 'Reject',
       destructive: true,
     });
@@ -418,6 +461,25 @@ const skillStatus = skillsToShow.map((skill: string) => {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       window.hvToast(err.error || 'Failed to reject candidate', 'error');
+    }
+    window.location.reload();
+  });
+
+  document.getElementById('unreject-btn')?.addEventListener('click', async () => {
+    const ok = await window.hvConfirm({
+      title: 'Undo rejection',
+      message: 'Move this candidate back into the active pipeline?',
+      confirmLabel: 'Undo Rejection',
+    });
+    if (!ok) return;
+    const res = await fetch(`/api/candidates/${candidateId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rejected: false }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      window.hvToast(err.error || 'Failed to undo rejection', 'error');
     }
     window.location.reload();
   });

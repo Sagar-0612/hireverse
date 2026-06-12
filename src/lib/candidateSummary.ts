@@ -81,7 +81,10 @@ export interface CandidateSummary {
   verdict: CandidateVerdict;
   verdictLabel: string;
   headline: string;
-  narrative: string;
+  // One discrete, grounded point per entry — rendered as a bullet list on the
+  // candidate profile rather than a wall of prose, so each fact (resume fit,
+  // interview trend, stage note, recommendation) is independently scannable.
+  narrative: string[];
   forwardSignals: string[];
   concernSignals: string[];
   // The headline "AI Score"/"AI Recommendation" the candidate page banner
@@ -302,7 +305,7 @@ export function buildCandidateSummary(input: CandidateSummaryInput): CandidateSu
       verdict: 'rejected',
       verdictLabel: 'Rejected — process ended',
       headline: `${input.name}'s process ended at "${stageLabel}" — no further movement is possible.`,
-      narrative: sentences.join(' '),
+      narrative: sentences,
       forwardSignals: [],
       concernSignals,
       overallScore,
@@ -336,7 +339,7 @@ export function buildCandidateSummary(input: CandidateSummaryInput): CandidateSu
       verdict: 'hired',
       verdictLabel: 'Hired — process complete',
       headline: `${input.name} was hired — their process is complete and no further action is needed here.`,
-      narrative: sentences.join(' '),
+      narrative: sentences,
       forwardSignals,
       concernSignals: [],
       overallScore,
@@ -373,7 +376,7 @@ export function buildCandidateSummary(input: CandidateSummaryInput): CandidateSu
       verdict,
       verdictLabel,
       headline: closing,
-      narrative: sentences.join(' '),
+      narrative: sentences,
       forwardSignals,
       concernSignals,
       overallScore,
@@ -428,7 +431,7 @@ export function buildCandidateSummary(input: CandidateSummaryInput): CandidateSu
     verdict,
     verdictLabel: verdict === 'advance' ? 'Leaning toward advancing' : 'Leaning toward holding',
     headline: sentences[sentences.length - 1],
-    narrative: sentences.join(' '),
+    narrative: sentences,
     forwardSignals,
     concernSignals,
     overallScore,

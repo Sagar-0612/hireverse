@@ -40,6 +40,7 @@ export const PUT: APIRoute = async ({ params, request }) => {
     const candidate = await Candidate.findById(doc.candidateId, 'name').lean();
     const job = await Job.findById(doc.jobId, 'title level').lean();
     const submission = typeof body.submission === 'string' ? body.submission.trim() : (doc.submission || '');
+    const questionAsked = typeof body.questionAsked === 'string' ? body.questionAsked.trim() : (doc.questionAsked || '');
 
     const result = analyzeAssessment({
       type: doc.type,
@@ -50,11 +51,13 @@ export const PUT: APIRoute = async ({ params, request }) => {
       testsTotal:   Number(body.testsTotal   ?? doc.testsTotal   ?? 0),
       candidateName: candidate?.name || 'The candidate',
       jobTitle: (job as any)?.title || '',
+      questionAsked,
     });
 
     // Store user inputs
     doc.evaluatorNotes      = evaluatorNotes;
     doc.submission          = submission;
+    doc.questionAsked       = questionAsked;
     doc.testsPassed         = Number(body.testsPassed  ?? doc.testsPassed  ?? 0);
     doc.testsTotal          = Number(body.testsTotal   ?? doc.testsTotal   ?? 0);
 
@@ -92,10 +95,39 @@ export const PUT: APIRoute = async ({ params, request }) => {
   if (typeof body.instructions    === 'string') doc.instructions    = body.instructions;
   if (typeof body.submission      === 'string') doc.submission      = body.submission;
   if (typeof body.evaluatorNotes  === 'string') doc.evaluatorNotes  = body.evaluatorNotes;
+  if (typeof body.questionAsked   === 'string') doc.questionAsked   = body.questionAsked;
   if (body.testsPassed !== undefined) doc.testsPassed = Number(body.testsPassed);
   if (body.testsTotal  !== undefined) doc.testsTotal  = Number(body.testsTotal);
-  if (body.status === 'submitted' && doc.status === 'pending') doc.status = 'submitted';
+  if (body.status === 'submitted' && doc.status === 'pending') {
+    if (!doc.submission.trim()) {
+      return json({ error: "Add the candidate's code, answer, or a link before marking as submitted." }, 400);
+    }
+    doc.status = 'submitted';
+  }
+
+  // Reschedule: update the due date/time. A change here is logged separately
+  // so there's a clear audit trail of when and why the deadline moved.
+  const rescheduling = (typeof body.dueDate === 'string' && body.dueDate !== doc.dueDate) ||
+    (typeof body.dueTime === 'string' && body.dueTime !== doc.dueTime);
+  const oldDue = { date: doc.dueDate, time: doc.dueTime };
+  if (typeof body.dueDate === 'string') doc.dueDate = body.dueDate;
+  if (typeof body.dueTime === 'string') doc.dueTime = body.dueTime;
+
   await doc.save();
+
+  if (rescheduling) {
+    const candidate = await Candidate.findById(doc.candidateId, 'name').lean();
+    const fmt = (d: string, t: string) => d ? `${d}${t ? ` ${t}` : ''}` : 'no deadline';
+    await logActivity({
+      type: 'interview',
+      action: 'interview_rescheduled',
+      message: `"${doc.round}" assessment for ${candidate?.name || 'candidate'} rescheduled from ${fmt(oldDue.date, oldDue.time)} to ${fmt(doc.dueDate, doc.dueTime)}`,
+      entityType: 'assessment',
+      entityId: doc._id.toString(),
+      jobId: doc.jobId.toString(),
+      candidateId: doc.candidateId.toString(),
+    });
+  }
 
   return json({ ...doc.toObject(), _id: doc._id.toString() });
 };

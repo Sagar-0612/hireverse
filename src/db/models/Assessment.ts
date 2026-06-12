@@ -18,6 +18,10 @@ export interface IAssessment extends Document {
   type: AssessmentType;
   status: 'pending' | 'submitted' | 'evaluated';
   instructions: string;        // problem statement / task given to candidate
+  suggestedQuestions: { skill: string; difficulty: string; question: string }[]; // server-generated, tailored to candidate/job
+  questionAsked: string;       // the actual question given to the candidate (from suggestions or custom)
+  dueDate: string;             // YYYY-MM-DD — when the candidate must complete this by (optional)
+  dueTime: string;             // HH:MM — optional time component for the due date
   submission: string;          // code/answer text or URL submitted
   evaluatorNotes: string;      // human reviewer's written notes
   testsPassed: number;
@@ -53,6 +57,13 @@ const AssessmentSchema = new Schema<IAssessment>(
     type:                { type: String, enum: ['coding', 'written', 'take-home'], default: 'coding' },
     status:              { type: String, enum: ['pending', 'submitted', 'evaluated'], default: 'pending' },
     instructions:        { type: String, default: '' },
+    suggestedQuestions:  {
+      type: [{ skill: String, difficulty: String, question: String, _id: false }],
+      default: [],
+    },
+    questionAsked:       { type: String, default: '' },
+    dueDate:             { type: String, default: '' },
+    dueTime:             { type: String, default: '' },
     submission:          { type: String, default: '' },
     evaluatorNotes:      { type: String, default: '' },
     testsPassed:         { type: Number, default: 0 },

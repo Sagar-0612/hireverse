@@ -8,6 +8,7 @@ import { Types } from "mongoose";
 import { findStage, sortedPipeline, hasUpcomingInterviewStage, hasUpcomingAssessmentStage } from "../../lib/pipeline";
 import { scoreColorHex } from "../../lib/scoreColor";
 import { generateInterviewGuide, type PriorRoundSummary } from "../../lib/interviewGuide";
+import { isOverdue } from "../../lib/scheduling";
 
 const { id } = Astro.params;
 if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/interviews');
@@ -36,6 +37,9 @@ const interview = {
 
 const isCompleted = interview.status === 'completed';
 const needsAnalysis = isCompleted && !interview.analysis;
+const overdue = isOverdue(interview.date, interview.time, interview.status === 'scheduled');
+const today = new Date().toISOString().split('T')[0];
+const canReschedule = interview.status === 'scheduled' || interview.status === 'rescheduled';
 
 // Determine what action makes sense for "next step" based on the candidate's
 // remaining pipeline — avoid offering "Schedule Interview" when the next stage
@@ -114,6 +118,7 @@ if (!isCompleted) {
       <div style="font-size:13px;color:var(--fg-body);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         {interview.jobTitle} · {interview.round}
         {interview.stageLabel && <span class="badge" style={`font-size:10px;background:${interview.stageColor}22;color:${interview.stageColor};border:1px solid ${interview.stageColor}55;`}>{interview.stageLabel}</span>}
+        {overdue && <span class="badge badge-error" style="font-size:10px;">Overdue</span>}
       </div>
     </div>
     <div style="display:flex;gap:24px;flex-wrap:wrap;">
@@ -298,6 +303,9 @@ if (!isCompleted) {
           <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Actions</h3>
           <div style="display:flex;flex-direction:column;gap:8px;">
             <button id="complete-btn-side" class="btn btn-primary" style="width:100%;border-radius:6px;">Mark as Completed</button>
+            {canReschedule && (
+              <button id="reschedule-btn" class="btn btn-secondary" style="width:100%;border-radius:6px;">Reschedule</button>
+            )}
             <button id="cancel-btn" class="btn btn-ghost" style="width:100%;color:#ee0000;">Cancel Interview</button>
           </div>
         </div>
@@ -326,6 +334,30 @@ if (!isCompleted) {
       <div style="display:flex;gap:10px;justify-content:flex-end;">
         <button id="modal-cancel" class="btn btn-secondary">Cancel</button>
         <button id="modal-save" class="btn btn-primary">Analyze &amp; Complete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reschedule modal -->
+  <div id="reschedule-modal" style="display:none;position:fixed;inset:0;z-index:100;align-items:center;justify-content:center;padding:20px;">
+    <div style="position:absolute;inset:0;background:rgba(0,0,0,0.6);" id="reschedule-overlay"></div>
+    <div class="card shadow-lvl-5" style="position:relative;z-index:1;width:420px;max-width:100%;padding:28px;">
+      <h2 style="font-size:18px;font-weight:600;color:var(--fg);margin:0 0 8px;">Reschedule Interview</h2>
+      <p style="font-size:13px;color:var(--fg-mute);margin:0 0 20px;">Pick a new date and time for {interview.candidateName}'s "{interview.round}" interview. The candidate and interviewer are not automatically re-notified — let them know separately if needed.</p>
+      <div class="grid-cols-2" style="margin-bottom:20px;">
+        <div>
+          <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Date</label>
+          <input id="reschedule-date" type="date" class="input" style="height:36px;" min={today} value={interview.date} />
+        </div>
+        <div>
+          <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Time</label>
+          <input id="reschedule-time" type="time" class="input" style="height:36px;" value={interview.time} />
+        </div>
+      </div>
+      <div id="reschedule-error" style="display:none;font-size:13px;color:#ef4444;margin-bottom:12px;"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button id="reschedule-cancel" class="btn btn-secondary">Cancel</button>
+        <button id="reschedule-save" class="btn btn-primary">Save</button>
       </div>
     </div>
   </div>
@@ -426,6 +458,50 @@ if (!isCompleted) {
       window.hvToast('Failed to re-analyze this interview.', 'error');
       btn.disabled = false;
       btn.innerHTML = original;
+    }
+  });
+
+  // Reschedule
+  const rescheduleModal = document.getElementById('reschedule-modal');
+  document.getElementById('reschedule-btn')?.addEventListener('click', () => {
+    if (rescheduleModal) rescheduleModal.style.display = 'flex';
+  });
+  document.getElementById('reschedule-cancel')?.addEventListener('click', () => {
+    if (rescheduleModal) rescheduleModal.style.display = 'none';
+  });
+  document.getElementById('reschedule-overlay')?.addEventListener('click', () => {
+    if (rescheduleModal) rescheduleModal.style.display = 'none';
+  });
+  document.getElementById('reschedule-save')?.addEventListener('click', async () => {
+    const btn = document.getElementById('reschedule-save');
+    const errorEl = document.getElementById('reschedule-error');
+    const date = document.getElementById('reschedule-date')?.value || '';
+    const time = document.getElementById('reschedule-time')?.value || '';
+    if (errorEl) errorEl.style.display = 'none';
+    if (!date || !time) {
+      if (errorEl) {
+        errorEl.textContent = 'Pick both a date and a time.';
+        errorEl.style.display = 'block';
+      }
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    const res = await fetch(`/api/interviews/${interviewId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date, time, status: 'scheduled' }),
+    });
+    if (res.ok) {
+      window.location.reload();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      if (errorEl) {
+        errorEl.textContent = err.error || 'Failed to reschedule.';
+        errorEl.style.display = 'block';
+      }
+      btn.disabled = false;
+      btn.textContent = 'Save';
     }
   });
 </script>

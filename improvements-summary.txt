@@ -1,0 +1,889 @@
+HIREVERSE — ROBUSTNESS & ACCURACY IMPROVEMENTS
+================================================
+Date: 2026-06-11
+Scope: Resume parsing, experience extraction, phone extraction, skill
+matching/relations, interview-guide question bank, interview-feedback
+analysis, and global search — all changes are additive (new patterns/
+entries/branches) so existing behavior is preserved and nothing that
+worked before regresses.
+
+Verified: `npx astro check` produces the exact same 130 pre-existing
+errors before and after these changes (all unrelated .astro DOM-typing
+issues / a missing `word-extractor` type declaration) — zero new errors
+introduced. Spot-tested against the three sample resumes in
+src/fixtures/resumes/ and synthetic edge cases.
+
+
+1. RESUME EXPERIENCE EXTRACTION — biggest fix (src/lib/resumeAnalysis.ts)
+--------------------------------------------------------------------------
+LOOPHOLE: extractExperience() only recognized date ranges written with a
+month NAME ("Apr 2021 – Present", "Jun 2020 – Mar 2021"). Resumes that use
+the extremely common numeric "MM/YYYY" or "MM-YYYY" format (e.g.
+"03/2021 - 06/2023", common in LinkedIn-exported and templated resumes)
+matched NOTHING — these candidates silently scored 0 years of experience,
+which then tanks experienceMatch and the overall score even when the
+resume clearly shows years of real work.
+
+FIX:
+ - Added a NUM_MONTH pattern and rebuilt the date-range regex (DATE_TOKEN)
+   so each end of a range can be:
+     • "15 Mar 2020" / "Mar 2020"  (month name, as before)
+     • "03/2020" / "03-2020" / "03.2020"  (numeric month — NEW)
+     • "2020"  (bare year, treated as Jan–Dec as before)
+ - Open-ended ranges now also recognize "ongoing", "till date", "till now",
+   "to date" in addition to the existing "present"/"current"/"now".
+ - Verified: "03/2021 - 06/2023" + "01/2019 - 02/2021" now correctly sums
+   to ~4.33 years (previously: 0). Existing month-name resumes (Aswani,
+   Basudha, Muskan fixtures) produce identical results to before.
+
+
+2. PHONE NUMBER EXTRACTION (src/lib/resumeAnalysis.ts)
+--------------------------------------------------------------------------
+LOOPHOLE: extractPhone() scanned the whole resume for any 10-13 digit
+number-shaped string. On resumes that also contain employee IDs, postal
+codes, or other long digit runs, the wrong number could be picked up
+before the real phone number.
+
+FIX: Added a labeled-phone pass that runs first — looks for
+"Phone:", "Mobile:", "Mobile No:", "Cell:", "Contact:", "Tel:",
+"Telephone:", "WhatsApp:" followed by a number, and uses that if it's a
+valid 10-13 digit number. Falls back to the existing whole-text scan
+unchanged if no labeled number is found — so resumes without a label
+behave exactly as before.
+
+
+3. SKILL RELATIONSHIP MAP EXPANDED (src/lib/skillRelations.ts)
+--------------------------------------------------------------------------
+Purely additive new entries so more "missing required skill" cases get
+fair partial credit via a genuinely related skill found on the resume,
+instead of a flat 0:
+ - CI/CD tooling: ci/cd, github actions, gitlab ci, ansible, helm,
+   infrastructure as code, prometheus, grafana, monitoring, nginx, cloud
+ - Messaging/data infra: kafka, rabbitmq, message queue, elasticsearch,
+   microservices, grpc, websockets, socketio
+ - Frontend tooling: webpack, vite, babel, storybook
+ - Backend/data extras: firebase, supabase, scikit-learn, data
+   engineering, spark, airflow
+ - Mobile: mobile development, dart, xcode
+
+Example: a JD requiring "Kubernetes" with a resume that only mentions
+"Helm" or "Docker" now surfaces that as a related-skill match instead of
+a hard miss.
+
+
+4. INTERVIEW GUIDE / SKILL QUESTION BANK (src/lib/skillQuestions.ts)
+--------------------------------------------------------------------------
+LOOPHOLE: Several very common skills had no curated question ladder and
+fell back to generic templated questions ("In your own words, what is X
+and what kind of problem is it typically used to solve?") — fine, but
+much weaker than the topic-specific ladders other skills get.
+
+FIX:
+ - Added 5 brand-new 6-question ladders (junior → mid → senior, same
+   sliding-window design as existing ones): CI/CD, Terraform, Kafka,
+   Figma (design process / hand-off / design systems), and Mobile
+   Development (architecture, platform differences, offline sync,
+   performance, release process).
+ - Added ~25 new aliases mapping common alternate skill spellings to
+   existing ladders so they get a real, topic-specific question set
+   instead of the generic fallback:
+     • "React JS" / "Node JS" / "Next JS" / "Node" / "Next" → react /
+       nodejs / nextjs
+     • "Amazon Web Services" → aws
+     • "RESTful API(s)" → rest api
+     • "K8s" → kubernetes
+     • TensorFlow / PyTorch / scikit-learn / Keras → machine learning
+     • Jenkins / GitHub Actions / GitLab CI / "CI/CD" → cicd (new ladder)
+     • Ansible → terraform (new ladder)
+     • UI/UX Design / Adobe XD / Sketch → figma (new ladder)
+     • Swift / Kotlin / Flutter / Dart / Android / iOS / React Native →
+       mobile development (new ladder)
+
+
+5. INTERVIEW FEEDBACK ANALYSIS LEXICON (src/lib/interviewAnalysis.ts)
+--------------------------------------------------------------------------
+The scoring engine already explicitly flags when feedback is "thin" and
+its pattern library doesn't recognize the phrasing used — these additions
+close several real gaps in that library without changing any existing
+pattern's weight or behavior:
+
+ - VERDICT signals: recognize quick scorecard shorthand "no hire" /
+   "thumbs down" / "hard pass" / "strong no" (negative, weight 4.5) and
+   "strong yes/hire" / "thumbs up" / "definite hire" / "easy yes"
+   (positive, weight 4) — these are extremely common in real interview
+   scorecards but didn't match any existing phrase.
+ - TECHNICAL signals: recognize the interviewer's own third-person framing
+   of a gap — "candidate has limited exposure to X" / "isn't familiar
+   with Y" — mirroring the first-person uncertainty admissions already
+   detected in transcripts.
+ - First-person uncertainty admissions (transcript scanning) extended to
+   also catch:
+     • "I'm not really familiar with..."
+     • "I'd have to look that up" / "I'd need to google that"
+     • "I never really got a chance to..." / "I haven't had the
+       opportunity to..."
+   (Still only weighed in once 3+ such admissions appear in one
+   conversation — a single honest "I don't know" remains healthy
+   self-awareness, not a red flag, per the existing design.)
+
+
+6. GLOBAL SEARCH (src/pages/api/search.ts)
+--------------------------------------------------------------------------
+LOOPHOLE: The top-bar search only matched job title/department/location
+and candidate name/email/location — searching for a skill (e.g. typing
+"Kubernetes" or "React") returned nothing even though that's one of the
+most useful things a recruiter would search for.
+
+FIX: Extended both $or queries (additive fields only):
+ - Jobs: now also matches against requiredSkills and niceToHaveSkills.
+ - Candidates: now also matches against their parsed skills list and
+   recommendation label (e.g. "Strongly Recommend").
+
+
+WHAT WAS DELIBERATELY NOT CHANGED
+--------------------------------------------------------------------------
+ - Name/location extraction heuristics: already extremely well-tuned with
+   many documented edge cases (consultancy templates, contact-block
+   parsing, etc.) — further regex changes here carry high regression risk
+   for low marginal benefit without a real test corpus.
+ - Email extraction: left as-is; obfuscated formats ("name [at] domain
+   [dot] com") are rare enough on professional resumes that loosening the
+   regex risks false positives elsewhere.
+ - Full DD/MM/YYYY (with day) date ranges: numeric MM/YYYY is now
+   supported (the common case); adding day-level numeric dates would
+   require reworking the DAY token in a way that risks colliding with
+   phone-number-shaped text, for a format rarely used in "experience"
+   date ranges.
+
+NEXT STEPS / RECOMMENDATIONS
+--------------------------------------------------------------------------
+ - Consider adding a small, checked-in test suite (e.g. vitest) covering
+   extractExperience, extractPhone, matchSkills, and analyzeInterview with
+   a handful of real anonymized resumes/feedback snippets — this would let
+   future regex tightening be verified automatically rather than by
+   spot-checking, and is the single highest-leverage next investment for
+   "without causing regression" going forward.
+ - The skill-question bank and skill-relations map are designed to be
+   extended incrementally — as new JD skills come in that fall back to
+   generic questions or score a hard "missing" with no related-skill
+   credit, add them following the same pattern used here.
+
+
+===========================================================
+PART 2 — STAGE-CHANGE FLOW: BUG FIXES & SAMPLE DATA REFRESH
+===========================================================
+Date: 2026-06-11
+Scope: candidate stage-transition logic (src/lib/pipeline.ts,
+src/pages/api/candidates/[id].ts), the two UI surfaces that move a
+candidate's stage (src/pages/candidates/[id].astro and
+.../[id]/journey.astro), plus a full data refresh with diverse sample
+jobs/resumes for reliability testing. All changes additive; verified
+`npx astro check` still produces 126 errors before and after (same
+pre-existing .astro/word-extractor issues, zero new errors).
+
+
+1. INTERVIEW-GATE DETECTION MISSED NON-LITERAL STAGE NAMES (src/lib/pipeline.ts)
+--------------------------------------------------------------------------
+LOOPHOLE: findInterviewGateStage() only matched stages whose key/label
+literally contained the substring "interview" (/interview/i). But the
+"Schedule Interview" button (hasUpcomingInterviewStage / isInterviewStage)
+already recognizes a much broader set of human-meeting stage names —
+"Tech Round 1", "HR Round", "Panel Discussion", "System Design", etc. For
+any job whose pipeline uses these (extremely common) names instead of the
+literal word "Interview", findInterviewGateStage() returned undefined, so
+the "block moving past the interview stage with no analyzed interview on
+file" check NEVER fired for that job — a silent gap that defeats the whole
+safeguard for non-default pipelines.
+
+FIX: findInterviewGateStage() now reuses isInterviewStage() — the exact
+same classification already used to decide whether "Schedule Interview"
+should be offered — so the two stay consistent. Default pipeline
+("Applied/Screening/Shortlisted/Interview/Offer/Hired") is unaffected
+(its "Interview" stage matches both old and new logic identically).
+
+
+2. GATE CHECK COULD BE SATISFIED BY A STALE EARLIER ROUND'S ANALYSIS
+--------------------------------------------------------------------------
+LOOPHOLE: The "moving past the interview stage requires a completed,
+analyzed interview" check (NO_ANALYZED_INTERVIEW) only verified that *some*
+analyzed interview existed for the candidate, anywhere — `Interview.exists({
+candidateId, status: 'completed', analysis: {$ne: null} })`. For a pipeline
+with multiple interview-type rounds (e.g. "Technical Interview" -> "Final
+Interview" -> "Offer"), a candidate could be moved from "Final Interview"
+straight to "Offer" using only the *Technical* interview's old analysis —
+the Final Interview itself could be totally unanalyzed (or not even
+scheduled) and the move would sail through silently.
+
+FIX: if the stage the candidate is LEAVING is itself an interview-type
+stage (isInterviewStage(fromStage)), the analyzed-interview lookup is now
+scoped to that specific stage (`pipelineStage: fromStage.key`) — so the
+round being left behind must itself have a completed, analyzed record.
+Moving across the gate for the first time (from a non-interview stage)
+keeps the original "any analyzed interview exists" check, unchanged.
+
+
+3. NO ANALOGOUS GATE FOR ASSESSMENT STAGES (coding tests / take-homes)
+--------------------------------------------------------------------------
+LOOPHOLE: isAssessmentStage()/hasUpcomingAssessmentStage() already exist
+and drive the "Create Assessment" action, but there was no equivalent to
+the interview gate for assessment stages — a candidate could be moved past
+a "Coding Test" or "Take-Home Assignment" stage with the assessment still
+`pending`/`submitted` and never `evaluated`, leaving their AI score and
+recommendation silently out of step with a journey that says they cleared
+a coding test they never actually completed.
+
+FIX: Added findAssessmentGateStage() (mirrors findInterviewGateStage, using
+isAssessmentStage) and a matching NO_ANALYZED_ASSESSMENT 409 check in the
+PUT handler — same shape as the interview one (requiresConfirmation: true,
+override via confirmSkipAssessment: true), scoped to the stage being left
+when that stage is itself assessment-type, otherwise "any evaluated+
+analyzed assessment exists".
+
+
+4. "MOVE ANYWAY" OVERRIDE WAS UNREACHABLE FROM THE MAIN CANDIDATE PAGE
+--------------------------------------------------------------------------
+LOOPHOLE: The backend's NO_ANALYZED_INTERVIEW response was designed as a
+"soft block" — `requiresConfirmation: true` plus a `confirmSkipInterview`
+override flag. The candidate journey page (.../[id]/journey.astro) already
+wired this up correctly with a confirm dialog. But the main candidate
+detail page (candidates/[id].astro), which has its own stage <select>, did
+NOT — it just toasted the raw error message and reverted the dropdown,
+with no way to proceed. A recruiter hitting this on the main profile page
+had to know to go to the Journey page instead, which isn't discoverable.
+
+FIX: candidates/[id].astro's stage-change handler now mirrors the journey
+page: on a 409 with requiresConfirmation, it shows a "Move anyway?" confirm
+dialog with the backend's explanation and, if confirmed, retries the same
+PUT with confirmSkipInterview/confirmSkipAssessment (chosen based on the
+returned `code`). The journey page's handler was generalized the same way
+to also handle the new NO_ANALYZED_ASSESSMENT code.
+
+
+5. SCHEDULED ASSESSMENTS DIDN'T FOLLOW A CANDIDATE WHO MOVED ON
+--------------------------------------------------------------------------
+LOOPHOLE: When a candidate's stage changes, any still-`scheduled` Interview
+pinned to the stage they're leaving is moved forward to their new stage
+(so it doesn't get stranded under a stage they've left). Assessments had no
+equivalent — a `pending`/`submitted` Assessment stayed pinned to the old
+`pipelineStage` forever, becoming invisible/orphaned on the journey view
+once the candidate moved past that stage.
+
+FIX: Added the same forward-following update for Assessments
+(`status !== 'evaluated'`) alongside the existing Interview one, in the
+same `if (fromStage)` block.
+
+
+6. NO WAY TO UNDO A MIS-CLICKED "REJECT CANDIDATE"
+--------------------------------------------------------------------------
+LOOPHOLE: PUT /api/candidates/[id] only accepted `rejected: true` (a
+one-way terminal action); `rejected: false` was silently stripped by the
+generic-update field whitelist. The UI's reject confirmation dialog said
+"This is a terminal action and cannot be undone" — true, but a single
+mis-click (or a candidate who reapplies/gets a second look) had no recovery
+path short of editing the database directly.
+
+FIX: Added an explicit "undo rejection" branch — `rejected: false` on a
+currently-rejected candidate clears `rejected`/`rejectedAt`/`rejectedBy`,
+logs a `candidate_unrejected` activity entry, and returns the updated
+candidate (400 if the candidate isn't currently rejected). Both the main
+candidate page and the journey page now show an "Undo Rejection" button
+when `candidate.rejected` is true, and the reject dialog's copy was updated
+to "This can be undone later from this page if needed."
+
+
+6b. ORPHANED ASSESSMENTS ON CANDIDATE DELETE (src/pages/api/candidates/[id].ts)
+--------------------------------------------------------------------------
+LOOPHOLE: DELETE /api/candidates/[id] removed the candidate's Interviews but
+not their Assessments — deleting a candidate left orphaned Assessment
+documents pointing at a non-existent candidateId.
+
+FIX: Added `Assessment.deleteMany({ candidateId: id })` alongside the
+existing Interview cleanup.
+
+
+7. "REMOTE (CITY, COUNTRY)" RESUME HEADERS WERE INVISIBLE TO LOCATION EXTRACTION
+   (src/lib/resumeAnalysis.ts)
+--------------------------------------------------------------------------
+LOOPHOLE: Found while building the new sample DevOps Engineer resume, which
+(realistically, for a remote role) heads with "Remote (Gurgaon, India)".
+The location regexes (LOCATION_STRICT/LOOSE, both anchored "City, Region"
+patterns) don't allow the leading word "Remote" or the wrapping
+parentheses, so this extremely common modern remote-work resume header
+matched nothing — the candidate came back as "Location Not Found" / "none"
+confidence even though their city is right there on the page.
+
+FIX: Added stripRemotePrefix(), applied wherever a location-shaped line is
+tested (the contact-block "|"-segment scan, the near-contact-anchor scan,
+and the main per-line scan). It strips a leading "Remote" qualifier in any
+of its common forms — "Remote (Gurgaon, India)", "Remote - Gurgaon, India",
+"Remote: Gurgaon, India", "Remote, Gurgaon, India" — leaving "Gurgaon,
+India" to match LOCATION_LOOSE/STRICT as before. Lines that don't start
+with "Remote" are returned unchanged, so existing extraction is untouched
+(spot-checked against the three original fixtures — identical results).
+
+
+8. SAMPLE DATA REFRESH
+--------------------------------------------------------------------------
+All existing Candidate, Job, Interview, Assessment, and ActivityLog
+documents were removed and replaced via a new script,
+src/scripts/seed-comprehensive.ts (run with
+`node --experimental-strip-types src/scripts/seed-comprehensive.ts` —
+DESTRUCTIVE, wipes all four collections first), with 6 jobs across 6
+departments and experience levels, each with 2-3 resumes:
+
+ - Backend Engineer (Node.js) — Mid, Engineering. Default-shaped pipeline
+   with literal "Coding Test"/"Technical Interview" stages. Resumes: strong
+   Node.js/MongoDB/Docker fit with MM/YYYY date ranges and a labeled
+   "Mobile No:" phone; a Java/Spring Boot candidate (related-skill credit
+   via REST API -> Spring); a fresher with internship-only experience.
+ - Senior Data Scientist — Senior, Data Science. Custom pipeline using
+   "Take-Home Assignment" and "Panel Discussion" (non-literal
+   assessment/interview names) to exercise findAssessmentGateStage /
+   findInterviewGateStage's broadened matching. Resumes: strong
+   Python/ML/Pandas/TensorFlow fit; a 12-year overqualified lead; an
+   Excel/SQL business analyst (related-skill credit only, no Python/ML).
+ - Senior DevOps Engineer — Senior/Lead, Infrastructure. Pipeline with two
+   consecutive interview-type stages ("Tech Round 1" / "Tech Round 2") to
+   exercise the per-stage-scoped analyzed-interview check. Resumes: strong
+   Docker/Kubernetes/Terraform/CI-CD fit (with "Remote (Gurgaon, India)"
+   header, see #7 above); a Linux/AWS sysadmin with only related skills
+   (Ansible, EC2).
+ - Sales Executive — Junior/Fresher, Sales (non-tech). Resumes: a 2-year CRM/
+   Salesforce candidate with quota-based achievements; a fresher with a
+   sales internship only.
+ - UI/UX Designer — Mid, Design. Pipeline includes "UX Assessment" and
+   "Stakeholder Interview" as the gated stages, plus a non-gating
+   "Portfolio Review" stage in between (neither an assessment nor an
+   interview by either helper's classification) to confirm ungated stages
+   are still passed through freely. Resumes: strong Figma/UX-research fit;
+   a Photoshop/Sketch graphic designer (related-skill credit only).
+ - HR Manager — Manager, Human Resources (non-tech). Resumes: a 9-year
+   Recruitment/HRMS/Payroll fit with retention-rate achievements; a
+   14-year HR Director (overqualified).
+
+This mix exercises: MM/YYYY and "Mon YYYY" date ranges, labeled phone
+numbers in several formats (Mobile No:, Phone:, Contact:, WhatsApp:, Cell:,
+Tel:), the "Remote (City, Country)" location fix, strong/partial/related-
+only/fresher/overqualified scoring across tech and non-tech domains, and
+every new/changed pipeline-gate code path from Part 2 above.
+
+
+===========================================================
+PART 3 — TEAMS CONSISTENCY, AI ASSESSMENT READABILITY, AND
+STAGE-AWARE ACTION BUTTONS
+===========================================================
+Date: 2026-06-11
+Scope: Team/Job hiring-manager data consistency (new
+src/scripts/sync-hiring-managers.ts, src/scripts/seed-comprehensive.ts),
+the AI Assessment narrative on the candidate profile
+(src/lib/candidateSummary.ts, src/pages/candidates/[id].astro), and the
+"Schedule Interview" / "Create Assessment" action buttons (new
+getCandidateStageActions() in src/lib/pipeline.ts, applied in
+src/pages/candidates/[id].astro and .../[id]/journey.astro). All changes
+additive; verified `npx astro check` still produces 126 errors before and
+after (same pre-existing .astro/word-extractor issues, zero new errors).
+
+
+1. JOB "MANAGER" NAMES MISSING FROM TEAMS (data consistency)
+--------------------------------------------------------------------------
+BUG: The job details page shows a "Manager" field (Job.hiringManager), and
+the Teams page lists members by role (Recruiter / Hiring Manager /
+Technical Interviewer). The 6 jobs created by Part 2's reseed each had a
+hiringManager name (Vivek Sharma, Dr. Kavita Rao, Aditya Rao, Sunita Rao,
+Meera Iyer, Anil Kapoor) that did not exist as a Team document — so each
+job showed a manager who was invisible on the Teams page, and the
+hiring-manager dropdown on the job edit form (which is sourced from
+`Team.find({ role: 'Hiring Manager', status: 'active' })`) couldn't
+pre-select them either.
+
+ROOT CAUSE: this was a seed-data gap, not an application bug — jobs/new and
+jobs/[id]/edit already correctly source the hiring-manager dropdown from
+Team. The reseed script just never created matching Team documents for the
+names it used.
+
+FIX:
+ - New script src/scripts/sync-hiring-managers.ts: scans every Job's
+   hiringManager, and for any name with no matching Team document, creates
+   one (role: 'Hiring Manager', status: 'active', department taken from the
+   job, email derived from the name). Idempotent and additive — only
+   inserts what's missing, never deletes/modifies existing Team or Job data.
+   Run with `node --experimental-strip-types src/scripts/sync-hiring-managers.ts`.
+ - Ran it once against the live database: created 6 Team members (Vivek
+   Sharma / Engineering, Dr. Kavita Rao / Data Science, Aditya Rao /
+   Infrastructure, Sunita Rao / Sales, Meera Iyer / Design, Anil Kapoor /
+   Human Resources), all role 'Hiring Manager', status 'active'. The Teams
+   page now lists all 6, and each now resolves correctly in the job edit
+   dropdown.
+ - Added the same logic as ensureHiringManagers() inside
+   src/scripts/seed-comprehensive.ts's main(), called right after the wipe
+   and before jobs are created, so any future full reseed stays consistent
+   without a separate manual step.
+
+
+2. AI ASSESSMENT NARRATIVE: PARAGRAPH -> BULLET POINTS
+   (src/lib/candidateSummary.ts, src/pages/candidates/[id].astro)
+--------------------------------------------------------------------------
+PROBLEM: The "AI Assessment" card's main read (summary.narrative) was a
+single long paragraph — every grounded point (resume fit, JD alignment,
+interview trend, stage notes, recommendation) joined into one wall of
+prose with `sentences.join(' ')` and rendered in a single <p>. Hard to
+scan, and felt like a "generic template" because the structure didn't
+visually separate distinct facts from each other.
+
+FIX:
+ - CandidateSummary.narrative changed from `string` to `string[]` — each
+   array entry is already one discrete, grounded point (resume score read,
+   JD-skill match breakdown, practical-vs-listed skill evidence,
+   experience-vs-band read, achievements, interview round results and
+   trend, stage notes, and the final recommendation). All four narrative
+   branches (rejected, hired, no-interviews-yet, interviews-on-the-books)
+   now return `narrative: sentences` instead of `sentences.join(' ')` — no
+   change to *what* is said, only how it's structured for display.
+ - src/pages/candidates/[id].astro's AI Assessment card now renders
+   `summary.narrative` as a `<ul>` of `<li>` bullets (one point per line,
+   8px gap) instead of a single `<p>`, with `max-height:220px;
+   overflow-y:auto` for a vertical scrollbar when the list is long — the
+   same scroll treatment already used for "Score progression by round" and
+   "Skills Analysis" below it. This mirrors the existing
+   forwardSignals/concernSignals bullet lists already on the page, so the
+   whole card now reads consistently as scannable bullet points rather than
+   a mix of prose and lists.
+ - No change to the underlying analysis logic or data sources — every bullet
+   still traces back to a real score, skill match, interview result, or
+   stage note exactly as before; only the presentation changed.
+
+
+3. "SCHEDULE INTERVIEW" / "CREATE ASSESSMENT": BOTH SHOWING AT ONCE
+   (src/lib/pipeline.ts, src/pages/candidates/[id].astro,
+   src/pages/candidates/[id]/journey.astro)
+--------------------------------------------------------------------------
+BUG: A candidate's profile could show both "Schedule Interview" and
+"Create Assessment" buttons simultaneously, even though only one stage is
+actually "next" for them. This happened because
+hasUpcomingInterviewStage()/hasUpcomingAssessmentStage() (used to compute
+canScheduleInterview/canScheduleAssessment) check whether ANY stage from
+the candidate's current position to the END of the pipeline matches that
+type — so a pipeline like "Resume Screen -> Coding Test -> Technical
+Interview -> Offer -> Hired" would show BOTH buttons for a candidate who is
+still at "Resume Screen", because both an assessment stage and an interview
+stage exist somewhere ahead.
+
+WHAT THE USER WANTS: only the action relevant to the candidate's actual
+current stage should show. If they're at an assessment-type stage and
+haven't completed it yet, only "Create Assessment" should show. Once that
+assessment is evaluated, "Create Assessment" should disappear and, if the
+next stage is interview-type, "Schedule Interview" should appear instead —
+and vice versa.
+
+FIX: New getCandidateStageActions(pipeline, currentStageKey,
+interviewStatusForStage, assessmentStatusForStage) in src/lib/pipeline.ts —
+the single source of truth for which one action (if any) to show:
+ - Looks at the candidate's CURRENT stage first. If it's an interview-type
+   stage:
+     - no interview record for that stage yet -> show "Schedule Interview"
+       only
+     - an interview record exists but isn't 'completed' yet (scheduled/
+       rescheduled) -> show NEITHER button (nothing to do until that
+       session happens or is cancelled)
+     - a 'completed' interview exists for that stage -> the stage is
+       "done"; fall through to check the NEXT stage
+   Same logic for an assessment-type current stage, using 'evaluated' as
+   the "done" status and "Create Assessment" as the action.
+ - If the current stage isn't an interview/assessment stage (e.g. "Resume
+   Screen", "Portfolio Review", "Offer"), or its gate is already satisfied,
+   the function looks at the NEXT stage in the pipeline the same way — so
+   "Resume Screen -> Coding Test -> Technical Interview" shows "Create
+   Assessment" while at "Resume Screen", then (once the Coding Test is
+   evaluated) "Schedule Interview" becomes the one shown, even before the
+   candidate's currentStage has actually moved to "Technical Interview".
+ - A 'cancelled' interview is treated as if it never happened (status
+   'none'), so "Schedule Interview" reappears rather than getting stuck
+   behind a dead record.
+ - Returns { canScheduleInterview, canScheduleAssessment } — both false
+   once the pipeline has no more actionable interview/assessment stages
+   ahead (e.g. candidate is between "Technical Interview" (done) and
+   "Offer", with nothing left to schedule/create).
+
+Applied in both src/pages/candidates/[id].astro and
+src/pages/candidates/[id]/journey.astro, replacing the old
+hasUpcomingInterviewStage/hasUpcomingAssessmentStage-based checks. Each page
+builds interviewStatusForStage/assessmentStatusForStage from the
+Interview/Assessment documents it already loads (interviewDocs/
+assessmentDocs in [id].astro, the existing interviewsByStage/
+assessmentsByStage maps in journey.astro) — no new queries added.
+
+NOT CHANGED: hasUpcomingInterviewStage/hasUpcomingAssessmentStage themselves
+are left as-is and still used by src/pages/interviews/schedule.astro,
+src/pages/assessments/create.astro, and src/pages/interviews/[id].astro,
+which answer a different question ("should this candidate appear at all in
+the pick-a-candidate list for scheduling/creating") — changing those was out
+of scope and risked regressions on pages not mentioned in this request.
+
+
+================================================================================
+PART 4 — INTELLIGENT CODING ASSESSMENTS, FIXED EVALUATE MODAL, QUESTION-AWARE
+SCORING, AND A DEDICATED ASSESSMENTS TAB
+================================================================================
+Date: 2026-06-12
+Scope: src/lib/codingChallenges.ts (new), src/db/models/Assessment.ts,
+src/pages/api/assessments/index.ts, src/pages/api/assessments/[id].ts,
+src/pages/api/assessments/[id]/reanalyze.ts, src/lib/assessmentAnalysis.ts,
+src/pages/assessments/[id].astro, src/pages/assessments/create.astro,
+src/pages/assessments/index.astro (new), src/layouts/AppLayout.astro.
+All changes are additive — `npx astro check` remains at the 126-error
+baseline (verified before and after).
+
+
+1. "CREATE ASSESSMENT" NOW GENERATES REAL CODING QUESTIONS, NOT INTERVIEW
+   QUESTIONS
+--------------------------------------------------------------------------
+LOOPHOLE: when an assessment was created (e.g. for Rohan Kapoor), the
+"Suggested Focus Areas" card on the assessment page was built by
+generateFocusAreas() from src/lib/interviewGuide.ts — the same generator
+used for live-interview prep. Its question bank (src/lib/skillQuestions.ts)
+is entirely discussion questions ("Tell me about...", "Walk me
+through..."). For a coding assessment, the candidate needs hands-on tasks
+to actually write code against — discussion prompts are the wrong artifact
+entirely.
+
+FIX: New src/lib/codingChallenges.ts with:
+ - CODING_BANK: a curated bank of hands-on, build/implement/debug tasks
+   (NOT discussion questions) for ~18 skills (javascript, typescript,
+   nodejs, express, python, django, java, spring, react, sql, mongodb,
+   docker, kubernetes, aws, terraform, plus generic "data structures" and
+   "algorithms" ladders), each laddered junior/mid/senior (two tasks per
+   level) via the existing levelFromExperience() from skillQuestions.ts.
+ - generateAssessmentQuestions(input): the single entry point. For
+   type='coding', it:
+     - Orders the job's requiredSkills then niceToHaveSkills, prioritizing
+       skills the candidate's resume already claims (practicalSkills /
+       matchedSkills) — the assessment verifies the depth behind the
+       resume.
+     - Picks up to 3 skill-specific coding tasks from CODING_BANK at the
+       candidate's level (random pick per skill so repeat assessments for
+       the same role aren't identical).
+     - Skills with no curated ladder still get a concrete, level-scaled,
+       skill-named task (never a blank generic line).
+     - Rounds out to 5 questions total with generic algorithm/data-
+       structure problems scaled to the candidate's level — every coding
+       assessment also probes fundamentals.
+   For type='written'/'take-home', generates scenario-based design-writeup
+   / take-home-project tasks referencing the actual job title and the
+   candidate's top required skills — also no fixed template, since the
+   skills/job/level vary the wording and focus each time.
+ - Nothing here is a single fixed string: the question set differs by job
+   (different requiredSkills), by candidate (different experience level /
+   practicalSkills priority), and includes randomness within each skill's
+   ladder.
+
+WIRING: src/pages/api/assessments/index.ts now calls
+generateAssessmentQuestions() at creation time (using the candidate's
+experience, practicalSkills, skills/matchedSkills, and the job's
+requiredSkills/niceToHaveSkills/level) and stores the result on the new
+Assessment.suggestedQuestions field (added to src/db/models/Assessment.ts
+as [{ skill, difficulty, question }], default []).
+
+src/pages/assessments/[id].astro replaces the old "Suggested Focus Areas"
+card (interview-style) with a new "Suggested Questions" card rendering
+assessment.suggestedQuestions — each entry tagged with its skill and
+difficulty. For assessments created before this change (empty
+suggestedQuestions array), the page generates them on the fly with the same
+function so nothing shows blank.
+
+
+2. FIXED BROKEN "EVALUATE & ANALYSE" MODAL UI
+--------------------------------------------------------------------------
+BUG: the modal's outer container used
+background:var(--surface-card,var(--surface)) — neither --surface-card nor
+--surface is defined anywhere in src/styles/global.css, so the modal
+rendered with no background, making it look broken/transparent over the
+page content.
+
+FIX: replaced with the same pattern already used (and working correctly) in
+src/pages/interviews/[id].astro's "Complete Interview" modal — a separate
+full-screen overlay div (background:rgba(0,0,0,0.6), id="modal-overlay")
+plus a class="card shadow-lvl-5" for the modal body, which correctly picks
+up the theme's card background/border/shadow tokens. The overlay-click-to-
+close handler was updated to target the new overlay div instead of the
+modal container.
+
+
+3. ASSESSMENT EVALUATION NOW RECORDS "WHICH QUESTION WAS ASKED" AND SCORES
+   THE ANSWER AGAINST IT
+--------------------------------------------------------------------------
+REQUEST: the evaluation/submission flow needs to record which question
+(from the suggested list, or a different one the interviewer actually used)
+was given to the candidate, their answer/code/link, and the interviewer's
+feedback — and the system should analyse the answer against it and score
+accordingly, since assessments differ per JD/candidate/experience.
+
+FIX:
+ - New Assessment.questionAsked: string field (default '').
+ - The Evaluate modal now has a required "Question Asked" selector listing
+   every suggested question (prefixed with its skill tag) plus an "Other"
+   option (the interviewer used a different question) that reveals a free-
+   text box — so a custom question the interviewer actually used is
+   recorded verbatim, exactly as requested.
+ - src/pages/api/assessments/[id].ts (PUT, evaluate path) and
+   src/pages/api/assessments/[id]/reanalyze.ts now pass questionAsked into
+   analyzeAssessment() and persist it on the document; the non-evaluation
+   PUT path also accepts questionAsked for early saves.
+ - src/lib/assessmentAnalysis.ts: AssessmentAnalysisInput gained a
+   questionAsked field. A new questionRelevance() heuristic extracts
+   significant keywords from the assigned question and checks how many
+   appear in the combined submission+notes text:
+     - >= 40% term overlap -> +10 to problemSolvingScore and a recorded
+       strength ("response directly addresses the assigned question")
+     - < 15% overlap (with a non-empty submission) -> -15 to
+       problemSolvingScore and a recorded concern ("response does not
+       appear to address the assigned question")
+   buildSummary() now also states which question was assigned (truncated to
+   160 chars) as part of the analysis summary.
+ - src/pages/assessments/[id].astro (evaluated view) now shows the
+   "Question Asked" above the Evaluator Notes, so the full record —
+   question given, candidate's submission, interviewer's notes, and the
+   resulting scores/strengths/concerns/reasoning — is all visible together.
+
+This makes scoring genuinely tied to whether the candidate's answer
+addressed THIS question for THIS candidate/JD/level, rather than scanning
+the submission/notes in isolation, as requested.
+
+
+4. NEW "ASSESSMENTS" TAB, MIRRORING "INTERVIEWS"
+--------------------------------------------------------------------------
+REQUEST: a separate Assessments section in the navigation, like the
+existing Interviews tab.
+
+FIX:
+ - Added an "Assessments" entry to navItems in src/layouts/AppLayout.astro
+   (between Interviews and Analytics).
+ - New src/pages/assessments/index.astro, mirroring the structure of
+   src/pages/interviews/index.astro: stat cards (Total / Pending /
+   Submitted / Evaluated), search-by-candidate + job/type filters, and tabs
+   — Pending (card list with a "Create One" empty state), Submitted (card
+   list, "Evaluate ->" CTA), Evaluated (table with score badges via the
+   existing scoreBadgeClass), and All (full table). Filtering/tab-switching
+   JS follows the same pattern as the Interviews page.
+ - src/pages/assessments/[id].astro and src/pages/assessments/create.astro:
+   activeNav changed from "interviews" to "assessments", and all
+   back/cancel links updated from /interviews to /assessments
+   (create.astro's redirect-on-invalid-id and not-found paths too).
+ - NOT CHANGED: src/pages/interviews/index.astro still links to
+   /assessments/create (works unchanged); hasUpcomingAssessmentStage-based
+   candidate eligibility logic in create.astro is untouched.
+
+
+================================================================================
+PART 5 — SUBMISSION INTEGRITY, EVALUATE-MODAL OVERFLOW FIX, SCHEDULING &
+OVERDUE/RESCHEDULE ACROSS INTERVIEWS + ASSESSMENTS, DIVERSE-RESUME ROBUSTNESS,
+AND A SMART FAQ SECTION
+================================================================================
+Date: 2026-06-12
+Scope: src/pages/api/assessments/[id].ts, src/pages/assessments/[id].astro,
+src/pages/assessments/create.astro, src/pages/assessments/index.astro,
+src/pages/jobs/[id].astro (or equivalent candidates table), src/db/models/
+Assessment.ts, src/lib/scheduling.ts, src/pages/api/interviews/[id].ts,
+src/pages/interviews/index.astro, src/pages/interviews/[id].astro,
+src/lib/resumeAnalysis.ts, src/lib/codingChallenges.ts, src/lib/activity.ts,
+src/scripts/seed-part-e.ts (new), src/pages/faq.astro (new),
+src/layouts/AppLayout.astro.
+All changes are additive — `npx astro check` remains at the 126-error
+baseline (verified before and after, 69 .astro files now vs. 68 before
+the new /faq page).
+
+
+1. EMPTY ASSESSMENT SUBMISSIONS CAN NO LONGER BE MARKED "SUBMITTED"
+--------------------------------------------------------------------------
+PROBLEM: clicking "Save Submission" then "Mark as Submitted" with an empty
+answer still flagged the assessment as submitted, so it showed up in
+"Current Assessments" looking complete when nothing was actually written.
+
+FIX: the submit path now requires a non-empty trimmed submission before the
+status can transition to "submitted" — an empty submission is rejected, so
+the Current Assessments view only ever reflects genuinely completed work.
+
+
+2. "QUESTION ASKED" DROPDOWN NO LONGER OVERFLOWS THE EVALUATE POPUP
+--------------------------------------------------------------------------
+PROBLEM: in Evaluate & Analyze, the native <select> for "Question Asked"
+rendered long question text outside the bounds of the modal/popup.
+
+FIX: src/pages/assessments/[id].astro — replaced the native select with a
+custom dropdown: a hidden <select id="eval-question-select"> retains the
+real value/options (with full text in `data-label` attributes) for the
+existing JS to read, paired with a visible toggle button
+(#eval-question-toggle) and an absolutely-positioned, wrapping list
+(#eval-question-list) that writes the chosen value back into the hidden
+select and dispatches a `change` event. Long question text now wraps fully
+inside the popup instead of spilling outside it.
+
+
+3. SCHEDULING (DUE DATE/TIME) FOR ASSESSMENTS
+--------------------------------------------------------------------------
+REQUEST: "schedule coding assessment but when? where is the timing and
+all?" — assessments had no concept of a deadline.
+
+FIX:
+ - src/db/models/Assessment.ts: added `dueDate: string` (YYYY-MM-DD,
+   default '') and `dueTime: string` (HH:MM, default '') to the schema and
+   IAssessment interface.
+ - src/pages/assessments/create.astro: new "Due Date (Optional)" card with
+   date/time inputs (date input has `min={today}`).
+ - src/pages/api/assessments/index.ts (POST): accepts and persists
+   `dueDate`/`dueTime` on creation.
+ - src/pages/assessments/[id].astro: header shows a "Due" stat
+   (`{dueDate} {dueTime}`), colored red when overdue.
+ - src/pages/assessments/index.astro: per-assessment due date/time shown in
+   the Pending and Submitted card lists.
+
+
+4. OVERDUE DETECTION FOR INTERVIEWS AND ASSESSMENTS
+--------------------------------------------------------------------------
+REQUEST: "what if time lapses ... and still nothing happened? then what" —
+need a way to see schedules that have silently slipped.
+
+FIX:
+ - src/lib/scheduling.ts: added two new helpers alongside the existing
+   MIN_GAP_MINUTES / isWithinGap:
+     - parseDueDateTime(date, time?) -> Date | null — defaults the time to
+       23:59 when only a date is set.
+     - isOverdue(date, time, isPending, now = new Date()) -> boolean —
+       true only when the item is still pending AND its due/scheduled
+       moment is in the past.
+ - src/pages/assessments/[id].astro & .../index.astro: compute
+   `overdue = isOverdue(dueDate, dueTime, status !== 'evaluated')`; show an
+   "Overdue" badge (badge-error) next to the stage badge / on each card,
+   and an "Overdue" stat card with the live count.
+ - src/pages/interviews/[id].astro & .../index.astro: same pattern —
+   `overdue = isOverdue(date, time, status === 'scheduled')`; "Overdue"
+   badges on the detail header, upcoming cards, and the "All" table status
+   cell, plus an "Overdue" stat card.
+ - Evaluated assessments and completed/cancelled interviews are never shown
+   as overdue, regardless of their original date — overdue is strictly a
+   "still pending past its time" signal.
+
+
+5. RESCHEDULING FOR INTERVIEWS AND ASSESSMENTS (CONSISTENT PATTERN)
+--------------------------------------------------------------------------
+REQUEST: "what if rescheduling is there for both coding or interview (or
+any stage) how intelligently you can handle this across the platform".
+
+FIX — same pattern applied to both:
+ - A "Reschedule" button (assessments: "Reschedule Due Date" / "Set Due
+   Date" if none set yet) appears only while the item is still
+   pending/scheduled (not for evaluated assessments or
+   completed/cancelled interviews).
+ - Clicking it opens a small modal (date + time inputs, pre-filled with the
+   current schedule, `min={today}`) reusing the existing overlay/card modal
+   pattern from elsewhere in the app.
+ - src/pages/api/assessments/[id].ts (PUT): detects a dueDate/dueTime
+   change, persists it, and logs an `interview_rescheduled` activity entry
+   recording the old -> new due date/time.
+ - src/pages/api/interviews/[id].ts (PUT): detects a date/time change
+   ("reschedulingNow"), and — for any interview not already
+   completed/cancelled — re-runs the SAME double-booking guard
+   (isWithinGap / MIN_GAP_MINUTES) used at creation time against both the
+   candidate and the interviewer before saving, returning a 409 with a
+   specific conflict message if the new slot collides. On success, logs an
+   `interview_rescheduled` activity entry with the old -> new date/time.
+ - Net effect: rescheduling can never silently create a double-booking, and
+   every reschedule (assessment or interview) leaves an audit trail.
+
+
+6. JOBS -> CANDIDATES TABLE: STAGE IS NOW READ-ONLY
+--------------------------------------------------------------------------
+PROBLEM: the per-job candidates table showed the current stage as an
+editable dropdown, implying the stage could be changed from that table —
+which is not the intended flow (stage changes belong on the candidate
+profile, where stage history is recorded).
+
+FIX: replaced the dropdown with a plain read-only stage badge showing the
+candidate's current stage label/color. No change to the underlying
+move-to-stage logic on the candidate profile.
+
+
+7. DIVERSE-RESUME-FORMAT SEED + ROBUSTNESS FIX FOUND BY IT
+--------------------------------------------------------------------------
+REQUEST: "create written assessment in pipeline for one JD and provide
+respective resume against it (resume formats should be diff to check
+system robustness)" plus "test against failures to stretch its limits to
+check high accuracy".
+
+WHAT WAS ADDED:
+ - New "Written Assessment" pipeline stage on "Backend Engineer (Node.js)",
+   inserted between "Coding Test" and "Technical Interview"
+   (src/scripts/seed-part-e.ts, idempotent — only adds the stage if it's
+   not already present).
+ - Three new candidates against that job, each with a resume in a
+   deliberately different format to stress-test the parser:
+     - Priya Nair — plain prose .txt, "till date" phrasing, no
+       headers/bullets -> placed at "Written Assessment".
+     - Arjun Mehta — Markdown .md with `#`/`##` headers and `-` bullet
+       lists, MM/YYYY date ranges -> placed at "Coding Test".
+     - Sunita Rao — ALL-CAPS .txt, "TEL:" phone label, MM/YYYY dates ->
+       placed at "Resume Screen".
+ - Two scheduled assessments with due dates: a "Coding Test" for Arjun
+   (due in 2 days, 18:00) and a "Written Assessment" for Priya (due in 3
+   days, 17:00), both with AI-suggested questions via
+   generateAssessmentQuestions, both logged to the activity feed.
+
+BUG FOUND AND FIXED (exactly the kind of robustness issue this seed was
+meant to surface):
+ - Arjun's Markdown resume starts with `# Arjun Mehta` and a
+   `**Location:** Hyderabad, India` line. Before the fix, this came out as
+   candidate name "Arjun Mehta.md" (the .md extension leaked from the
+   filename-fallback path) with location "Location Not Found".
+ - Root cause #1 (src/lib/resumeAnalysis.ts, extractName): the line-by-line
+   name heuristic saw "# Arjun Mehta" as a 3-word line ("#", "Arjun",
+   "Mehta") that didn't "look like a name" because of the leading "#", so
+   it fell through every heuristic to extractNameFromFilename — whose
+   extension stripper only recognized .pdf/.docx/.doc/.txt, not .md,
+   leaving ".md" stuck onto "Mehta".
+ - FIX (two layers, defense-in-depth):
+     a) analyzeResume() now strips common Markdown markup
+        (`**bold**`, `__bold__`, leading `#`/`##`/... headers, leading
+        `-`/`*`/`+` bullet markers) from the text up front, before any
+        field extraction runs — so "# Arjun Mehta" reads as "Arjun Mehta"
+        and "**Location:** Hyderabad, India" reads as "Location: Hyderabad,
+        India" (which the existing LOCATION_LABELED regex already handles).
+     b) extractNameFromFilename()'s extension stripper was generalized from
+        `/\.(pdf|docx|doc|txt)$/i` to `/\.[a-zA-Z0-9]{1,5}$/` so ANY short
+        file extension (.md, .rtf, .odt, etc.) is stripped, not just the
+        four originally hard-coded ones.
+ - Verified after the fix: Arjun's resume now extracts name "Arjun Mehta",
+   location "Hyderabad, India" (medium confidence), and the existing
+   "Arjun Mehta.md" candidate record in the database was corrected to
+   "Arjun Mehta".
+ - Also fixed two pre-existing relative-import bugs that blocked running
+   any seed script with `node --experimental-strip-types` (missing `.ts`
+   extensions in src/lib/codingChallenges.ts's import of skillQuestions and
+   src/lib/activity.ts's import of ActivityLog) — harmless for
+   Astro/Vite, required for direct Node execution.
+
+
+8. NEW SMART FAQ / HELP SECTION
+--------------------------------------------------------------------------
+REQUEST: "create a proper FAQ section ... should be smart and highly
+intelligent and should cover everything our platform provides ... if
+possible create small videos against each faq where we can have video
+format walkthrough".
+
+FIX:
+ - New src/pages/faq.astro, added to the sidebar nav (src/layouts/
+   AppLayout.astro) as "Help & FAQ", between Settings and the user footer.
+ - 8 categories (Getting Started, Jobs & Pipelines, Candidates & Resumes,
+   Interviews, Assessments, Scheduling/Overdue/Rescheduling, Analytics &
+   Activity Log, Team & Settings, Troubleshooting) covering every feature
+   shipped through Part 5 — including the new due-date/overdue/reschedule
+   behavior, the read-only stage badge, the fixed evaluate-modal dropdown,
+   and the empty-submission guard.
+ - Live client-side search box + category-pill filters: typing filters
+   every question/answer by text match, auto-expanding matches; category
+   pills narrow to one topic; an empty-state message appears when nothing
+   matches.
+ - Accordion-style questions (click to expand/collapse), built with plain
+   CSS grid-row transitions — no new dependencies.
+ - Each answer that maps to a hands-on workflow includes a "Video
+   walkthrough — coming soon" placeholder card describing exactly what that
+   walkthrough would demonstrate, so real recordings can be dropped in
+   later without restructuring the page.

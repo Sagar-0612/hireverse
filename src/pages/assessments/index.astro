@@ -1,0 +1,318 @@
+---
+import AppLayout from "../../layouts/AppLayout.astro";
+import { connectDB } from "../../db/connection";
+import { Assessment } from "../../db/models/Assessment";
+import { findStage } from "../../lib/pipeline";
+import { scoreBadgeClass } from "../../lib/scoreColor";
+import { isOverdue } from "../../lib/scheduling";
+
+await connectDB();
+const rawAssessments = await Assessment.find()
+  .populate('candidateId', 'name')
+  .populate('jobId', 'title pipeline')
+  .sort({ createdAt: -1 })
+  .lean();
+
+const assessments = rawAssessments.map(a => {
+  const job = a.jobId as any;
+  const stage = findStage(job?.pipeline || [], a.pipelineStage);
+  return {
+    id: a._id.toString(),
+    round: a.round,
+    type: a.type,
+    status: a.status,
+    overallScore: a.overallScore,
+    recommendation: a.recommendation,
+    createdAt: a.createdAt,
+    dueDate: a.dueDate || '',
+    dueTime: a.dueTime || '',
+    candidateName: (a.candidateId as any)?.name || 'Unknown',
+    candidateId: (a.candidateId as any)?._id?.toString() || '',
+    jobTitle: job?.title || '',
+    stageLabel: stage?.label || '',
+    stageColor: stage?.color || '#6b7280',
+    overdue: isOverdue(a.dueDate || '', a.dueTime || '', a.status !== 'evaluated'),
+  };
+});
+
+const pending = assessments.filter(a => a.status === 'pending');
+const submitted = assessments.filter(a => a.status === 'submitted');
+const evaluated = assessments.filter(a => a.status === 'evaluated');
+const overdueCount = assessments.filter(a => a.overdue).length;
+
+const uniqueJobs = [...new Set(assessments.map(a => a.jobTitle).filter(Boolean))].sort();
+
+const typeLabel = (t: string) => t === 'coding' ? 'Coding' : t === 'written' ? 'Written' : 'Take-Home';
+const fmtDate = (d: Date) => new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+---
+
+<AppLayout title="Assessments" activeNav="assessments">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:28px;flex-wrap:wrap;">
+    <div>
+      <h1 style="font-size:24px;font-weight:600;color:var(--fg);letter-spacing:-0.5px;margin:0 0 4px;">Assessments</h1>
+      <p style="font-size:14px;color:var(--fg-mute);margin:0;">{pending.length} pending · {submitted.length} submitted · {evaluated.length} evaluated</p>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <a href="/assessments/create" class="btn btn-primary btn-sm">
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="1" y="2" width="11" height="10" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M1 5.5h11M4 1v2M9 1v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4.5 8.5h4M6.5 7v3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        Create Assessment
+      </a>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px;">
+    <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Total</div><div class="stat-value" style="font-size:22px;">{assessments.length}</div></div>
+    <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Pending</div><div class="stat-value" style="font-size:22px;color:#3b82f6;">{pending.length}</div></div>
+    <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Submitted</div><div class="stat-value" style="font-size:22px;color:#f59e0b;">{submitted.length}</div></div>
+    <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Evaluated</div><div class="stat-value" style="font-size:22px;color:#10b981;">{evaluated.length}</div></div>
+    <div class="stat-card shadow-lvl-1" style="padding:16px;"><div class="stat-label">Overdue</div><div class="stat-value" style="font-size:22px;color:#ef4444;">{overdueCount}</div></div>
+  </div>
+
+  <!-- Filters — applied across all tabs via client-side JS -->
+  <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+    <div class="search-wrap" style="flex:1;min-width:180px;max-width:280px;">
+      <span class="search-icon"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"><circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.5"/><path d="M9 9l2.5 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+      <input id="as-search" type="text" class="input search-input" placeholder="Search candidate…" />
+    </div>
+    <select id="as-job-filter" class="select" style="width:210px;">
+      <option value="">All Jobs</option>
+      {uniqueJobs.map(t => <option value={t}>{t}</option>)}
+    </select>
+    <select id="as-type-filter" class="select" style="width:160px;">
+      <option value="">All Types</option>
+      <option value="coding">Coding</option>
+      <option value="written">Written</option>
+      <option value="take-home">Take-Home</option>
+    </select>
+    <span id="as-count" style="font-size:13px;color:var(--fg-mute);margin-left:auto;">{assessments.length} results</span>
+  </div>
+
+  <div class="tabs">
+    <a href="#pending" class="tab active" data-tab="pending">Pending ({pending.length})</a>
+    <a href="#submitted" class="tab" data-tab="submitted">Submitted ({submitted.length})</a>
+    <a href="#evaluated" class="tab" data-tab="evaluated">Evaluated ({evaluated.length})</a>
+    <a href="#all" class="tab" data-tab="all">All ({assessments.length})</a>
+  </div>
+
+  <!-- Pending -->
+  <div id="tab-pending" class="tab-pane">
+    {pending.length === 0 ? (
+      <div class="empty-state card shadow-lvl-2">
+        <div style="font-size:15px;font-weight:500;color:var(--fg);">No pending assessments</div>
+        <a href="/assessments/create" class="btn btn-primary btn-sm" style="margin-top:12px;">Create One</a>
+      </div>
+    ) : (
+      <div id="pending-list" style="display:flex;flex-direction:column;gap:12px;">
+        {pending.map(a => (
+          <div class="card shadow-lvl-2 as-row"
+            data-name={a.candidateName.toLowerCase()}
+            data-job={a.jobTitle}
+            data-type={a.type}
+            data-status={a.status}
+            style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;padding:16px 20px;">
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:14px;font-weight:600;color:var(--fg);">{a.candidateName}</div>
+              <div style="font-size:13px;color:var(--fg-body);display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                {a.jobTitle} · {a.round}
+                {a.stageLabel && <span class="badge" style={`font-size:10px;background:${a.stageColor}22;color:${a.stageColor};border:1px solid ${a.stageColor}55;`}>{a.stageLabel}</span>}
+                {a.overdue && <span class="badge badge-error" style="font-size:10px;">Overdue</span>}
+              </div>
+              <div style="font-size:12px;color:var(--fg-mute);margin-top:2px;">{typeLabel(a.type)} · Created {fmtDate(a.createdAt)}{a.dueDate && ` · Due ${a.dueDate}${a.dueTime ? ` ${a.dueTime}` : ''}`}</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-shrink:0;">
+              <span class="badge badge-neutral">{a.status}</span>
+              <a href={`/assessments/${a.id}`} class="btn btn-ghost btn-sm">View →</a>
+            </div>
+          </div>
+        ))}
+        <div id="pending-empty" style="display:none;" class="empty-state card shadow-lvl-2">
+          <div style="font-size:14px;color:var(--fg-mute);">No assessments match the current filters.</div>
+        </div>
+      </div>
+    )}
+  </div>
+
+  <!-- Submitted -->
+  <div id="tab-submitted" class="tab-pane" style="display:none;">
+    {submitted.length === 0 ? (
+      <div class="empty-state card shadow-lvl-2"><div style="font-size:15px;font-weight:500;color:var(--fg);">No assessments awaiting evaluation</div></div>
+    ) : (
+      <div id="submitted-list" style="display:flex;flex-direction:column;gap:12px;">
+        {submitted.map(a => (
+          <div class="card shadow-lvl-2 as-row"
+            data-name={a.candidateName.toLowerCase()}
+            data-job={a.jobTitle}
+            data-type={a.type}
+            data-status={a.status}
+            style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;padding:16px 20px;">
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:14px;font-weight:600;color:var(--fg);">{a.candidateName}</div>
+              <div style="font-size:13px;color:var(--fg-body);display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                {a.jobTitle} · {a.round}
+                {a.stageLabel && <span class="badge" style={`font-size:10px;background:${a.stageColor}22;color:${a.stageColor};border:1px solid ${a.stageColor}55;`}>{a.stageLabel}</span>}
+                {a.overdue && <span class="badge badge-error" style="font-size:10px;">Overdue</span>}
+              </div>
+              <div style="font-size:12px;color:var(--fg-mute);margin-top:2px;">{typeLabel(a.type)} · Created {fmtDate(a.createdAt)}{a.dueDate && ` · Due ${a.dueDate}${a.dueTime ? ` ${a.dueTime}` : ''}`}</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-shrink:0;">
+              <span class="badge badge-info">{a.status}</span>
+              <a href={`/assessments/${a.id}`} class="btn btn-ghost btn-sm">Evaluate →</a>
+            </div>
+          </div>
+        ))}
+        <div id="submitted-empty" style="display:none;" class="empty-state card shadow-lvl-2">
+          <div style="font-size:14px;color:var(--fg-mute);">No assessments match the current filters.</div>
+        </div>
+      </div>
+    )}
+  </div>
+
+  <!-- Evaluated -->
+  <div id="tab-evaluated" class="tab-pane" style="display:none;">
+    {evaluated.length === 0 ? (
+      <div class="empty-state card shadow-lvl-2"><div style="font-size:15px;font-weight:500;color:var(--fg);">No evaluated assessments</div></div>
+    ) : (
+      <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Candidate</th><th>Job</th><th>Round</th><th>Type</th><th>Score</th><th>Recommendation</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="evaluated-tbody">
+              {evaluated.map(a => (
+                <tr class="as-row"
+                  data-name={a.candidateName.toLowerCase()}
+                  data-job={a.jobTitle}
+                  data-type={a.type}
+                  data-status={a.status}>
+                  <td style="font-weight:500;color:var(--fg);">{a.candidateName}</td>
+                  <td style="color:var(--fg-body);font-size:13px;">{a.jobTitle}</td>
+                  <td style="color:var(--fg-mute);">{a.round}</td>
+                  <td style="color:var(--fg-mute);">{typeLabel(a.type)}</td>
+                  <td><span class={`badge ${scoreBadgeClass(a.overallScore)}`}>{a.overallScore}</span></td>
+                  <td style="font-size:12px;color:var(--fg-body);max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{a.recommendation}</td>
+                  <td><a href={`/assessments/${a.id}`} class="btn btn-ghost btn-sm">Analysis →</a></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )}
+  </div>
+
+  <!-- All -->
+  <div id="tab-all" class="tab-pane" style="display:none;">
+    <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Candidate</th><th>Job</th><th>Round</th><th>Type</th><th>Created</th><th>Status</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="all-tbody">
+            {assessments.map(a => (
+              <tr class="as-row"
+                data-name={a.candidateName.toLowerCase()}
+                data-job={a.jobTitle}
+                data-type={a.type}
+                data-status={a.status}>
+                <td style="font-weight:500;color:var(--fg);">{a.candidateName}</td>
+                <td style="font-size:13px;color:var(--fg-body);">{a.jobTitle}</td>
+                <td style="color:var(--fg-mute);">
+                  {a.round}
+                  {a.stageLabel && <span class="badge" style={`margin-left:6px;font-size:10px;background:${a.stageColor}22;color:${a.stageColor};border:1px solid ${a.stageColor}55;`}>{a.stageLabel}</span>}
+                </td>
+                <td><span class="badge badge-neutral" style="font-size:11px;">{typeLabel(a.type)}</span></td>
+                <td style="font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--fg-mute);">{fmtDate(a.createdAt)}</td>
+                <td>
+                  <span class={`badge ${a.status === 'evaluated' ? 'badge-success' : a.status === 'submitted' ? 'badge-info' : 'badge-neutral'}`}>{a.status}</span>
+                </td>
+                <td><a href={`/assessments/${a.id}`} class="btn btn-ghost btn-sm">View →</a></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</AppLayout>
+
+<script>
+  // Tab switching
+  document.querySelectorAll<HTMLAnchorElement>('.tab[data-tab]').forEach(tab => {
+    tab.addEventListener('click', (e) => {
+      e.preventDefault();
+      const target = tab.dataset.tab;
+      document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll<HTMLDivElement>('.tab-pane').forEach(p => {
+        p.style.display = p.id === `tab-${target}` ? '' : 'none';
+      });
+      updateCount();
+    });
+  });
+
+  // Filter controls
+  const asSearch = document.getElementById('as-search') as HTMLInputElement;
+  const asJobFilter = document.getElementById('as-job-filter') as HTMLSelectElement;
+  const asTypeFilter = document.getElementById('as-type-filter') as HTMLSelectElement;
+  const asCount = document.getElementById('as-count');
+
+  function getFilters() {
+    return {
+      q: asSearch?.value.toLowerCase() || '',
+      job: asJobFilter?.value || '',
+      type: asTypeFilter?.value || '',
+    };
+  }
+
+  function matchesFilters(el: Element, f: ReturnType<typeof getFilters>): boolean {
+    const d = (el as HTMLElement).dataset;
+    return (
+      (!f.q || (d.name || '').includes(f.q)) &&
+      (!f.job || d.job === f.job) &&
+      (!f.type || d.type === f.type)
+    );
+  }
+
+  function updateCount() {
+    const activeTab = document.querySelector('.tab.active')?.getAttribute('data-tab') || 'pending';
+    const f = getFilters();
+    let visible = 0;
+
+    document.querySelectorAll(`#tab-${activeTab} .as-row`).forEach(el => {
+      const show = matchesFilters(el, f);
+      (el as HTMLElement).style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+
+    const emptyEl = document.getElementById(`${activeTab}-empty`);
+    if (emptyEl) emptyEl.style.display = visible === 0 ? '' : 'none';
+
+    if (asCount) asCount.textContent = `${visible} results`;
+  }
+
+  function applyFilters() {
+    // Apply across ALL tabs so switching tabs after filtering shows correct results
+    const f = getFilters();
+    ['pending', 'submitted', 'evaluated', 'all'].forEach(tab => {
+      let visible = 0;
+      document.querySelectorAll(`#tab-${tab} .as-row`).forEach(el => {
+        const show = matchesFilters(el, f);
+        (el as HTMLElement).style.display = show ? '' : 'none';
+        if (show) visible++;
+      });
+      const emptyEl = document.getElementById(`${tab}-empty`);
+      if (emptyEl) emptyEl.style.display = visible === 0 ? '' : 'none';
+    });
+    updateCount();
+  }
+
+  asSearch?.addEventListener('input', applyFilters);
+  asJobFilter?.addEventListener('change', applyFilters);
+  asTypeFilter?.addEventListener('change', applyFilters);
+</script>

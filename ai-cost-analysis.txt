@@ -1,0 +1,254 @@
+================================================================================
+HireVerse — AI Cost / Credit Analysis (Business POV)
+Prepared: 2026-06-11
+================================================================================
+
+PURPOSE
+-------
+You asked: "If I add an AI agent to analyse resumes (and other candidate data),
+what will it cost per resume — and how does that compare to a senior's
+multi-agent setup that he says costs ~0.7 'credits' per resume?"
+
+This document gives you real numbers based on Anthropic's current Claude API
+pricing (June 2026) and the actual codebase, so you have your own baseline
+instead of relying on someone else's vague "credits" figure.
+
+
+================================================================================
+1. WHERE HIREVERSE STANDS TODAY — IMPORTANT
+================================================================================
+
+I checked every "analysis" module in the codebase:
+
+  - src/lib/resumeAnalysis.ts
+  - src/lib/assessmentAnalysis.ts
+  - src/lib/interviewAnalysis.ts
+  - src/lib/candidateSummary.ts
+
+NONE of these call an LLM. There is no Anthropic/OpenAI key anywhere in
+.env.example, no `anthropic`/`openai` SDK in package.json's AI sense, no
+fetch() to any AI API.
+
+What HireVerse actually does today is 100% deterministic, regex/heuristic
+based:
+  - Resume text is extracted (pdf-parse / mammoth / word-extractor)
+  - Name, email, phone, location, experience, skills are pulled out with
+    regex + keyword matching
+  - Skill matches are scored 0/35/65/100 based on whether a skill is
+    "missing / related / listed / practically demonstrated"
+  - Assessment & interview analysis use the same kind of keyword/regex
+    "signal scanning" against evaluator notes
+
+COST OF THIS TODAY: $0.00 per resume. Zero API calls, zero tokens, zero
+"credits" of any kind. It's pure JS/TS string processing running on your own
+server.
+
+This matters because it means:
+  - Your current running cost is $0, regardless of volume
+  - Any number below is the cost of a NEW capability you'd be ADDING, not a
+    cost you're already paying
+  - The "0.7 credits/resume" your senior quoted is for a SEPARATE, LLM-based
+    system — not a comparison against what HireVerse currently does
+
+
+================================================================================
+2. WHAT "0.7 CREDITS" PROBABLY MEANS
+================================================================================
+
+"Credits" is not an Anthropic API unit — the Claude API bills in real money
+per token (see section 3). "Credits" is almost always a SaaS-platform
+abstraction layered on top of the underlying model cost, with a markup baked
+in. Typical credit systems price 1 credit anywhere from $0.01 to $0.10
+depending on the vendor's margin.
+
+So "0.7 credits/resume" could mean anywhere from ~$0.007 to ~$0.07 per resume
+— a 10x range. Without knowing his platform's $-per-credit conversion, that
+number is not directly actionable. What IS actionable is the raw Claude API
+cost below, which you can compare apples-to-apples once you know his stack's
+markup.
+
+
+================================================================================
+3. CURRENT CLAUDE API PRICING (June 2026)
+================================================================================
+
+  Model              | Input $/1M tokens | Output $/1M tokens
+  -------------------|-------------------|--------------------
+  Claude Opus 4.8    | $5.00             | $25.00
+  Claude Sonnet 4.6  | $3.00             | $15.00
+  Claude Haiku 4.5   | $1.00             | $5.00
+
+Prompt caching (reusing the job description + system prompt across many
+resumes for the same job posting) costs ~1.25x on first write, then reads
+back at ~0.1x (10%) of input price on every subsequent call. This matters a
+lot for HireVerse's use case — the same job posting gets matched against
+dozens/hundreds of resumes.
+
+
+================================================================================
+4. SINGLE-AGENT COST PER RESUME (one Claude API call per resume)
+================================================================================
+
+A realistic single-call resume-analysis prompt looks like:
+
+  - System prompt / scoring rubric (instructions, JSON schema): ~600 tokens
+  - Job description + required/nice-to-have skills:             ~400 tokens
+  - Resume text (1-2 page resume):                               ~1,000-1,500 tokens
+  - Structured JSON output (scores, gaps, recommendation, etc.): ~400-600 tokens
+
+  TOTAL ≈ 2,000-2,500 input tokens, ~500 output tokens per resume
+
+WITHOUT caching:
+
+  Model        | Input cost          | Output cost         | Total/resume
+  -------------|---------------------|----------------------|-------------
+  Sonnet 4.6   | 2,250 * $3/1M = $0.00675 | 500 * $15/1M = $0.0075  | ~$0.0143
+  Haiku 4.5    | 2,250 * $1/1M = $0.00225 | 500 * $5/1M  = $0.0025  | ~$0.0048
+  Opus 4.8     | 2,250 * $5/1M = $0.01125 | 500 * $25/1M = $0.0125  | ~$0.0238
+
+WITH prompt caching (system prompt + JD ~1,000 tokens cached, reused across
+all resumes for the same job — read at 0.1x after the first write):
+
+  Model        | Approx total/resume (after first resume for that job)
+  -------------|--------------------------------------------------------
+  Sonnet 4.6   | ~$0.011
+  Haiku 4.5    | ~$0.0037
+  Opus 4.8     | ~$0.019
+
+==> A single-agent Claude call to analyse one resume costs roughly
+    $0.004 - $0.024 depending on model choice — i.e. about 0.5 to 2.5 US
+    cents per resume.
+
+
+================================================================================
+5. MULTI-AGENT COST PER RESUME
+================================================================================
+
+A multi-agent setup (e.g. separate agents for: resume parsing, skill-gap
+analysis, interview-guide generation, achievements/red-flag detection) means
+3-4 separate model calls per resume, each with its own system prompt +
+context + output. Even with shared caching, multi-agent pipelines typically
+cost 3-6x a single well-designed call because:
+
+  - Each agent re-sends a chunk of the resume/JD context
+  - Each agent has its own instructions/system prompt
+  - Coordinator/orchestrator overhead (routing, aggregation) adds its own
+    tokens
+  - Agents often run at higher "effort"/thinking levels for better quality
+
+  Model        | Single-call cost | Multi-agent (4x) estimate
+  -------------|-------------------|----------------------------
+  Sonnet 4.6   | ~$0.011-$0.014    | ~$0.045 - $0.06 per resume
+  Haiku 4.5    | ~$0.004-$0.005    | ~$0.015 - $0.02 per resume
+  Opus 4.8     | ~$0.019-$0.024    | ~$0.08 - $0.12 per resume
+
+==> Your senior's "0.7 credits/resume" lines up plausibly with a Sonnet- or
+    Opus-class multi-agent pipeline if 1 credit ≈ $0.05-$0.10 (a fairly
+    typical SaaS markup). It is NOT an unreasonable number for multi-agent —
+    but it's roughly 3-6x what a well-designed single-agent call would cost
+    for comparable quality.
+
+
+================================================================================
+6. MONTHLY / ANNUAL COST PROJECTIONS
+================================================================================
+
+Assuming HireVerse adds ONE Claude call per resume upload (single-agent,
+Sonnet 4.6, with caching) at ~$0.011/resume:
+
+  Resumes/month | Monthly cost | Annual cost
+  ---------------|--------------|-------------
+  100            | ~$1.10       | ~$13
+  500            | ~$5.50       | ~$66
+  1,000          | ~$11         | ~$132
+  5,000          | ~$55         | ~$660
+  10,000         | ~$110        | ~$1,320
+
+Same volumes with Haiku 4.5 (~$0.0037/resume) — good enough for structured
+extraction/classification tasks:
+
+  Resumes/month | Monthly cost | Annual cost
+  ---------------|--------------|-------------
+  100            | ~$0.37       | ~$4.40
+  1,000          | ~$3.70       | ~$44
+  10,000         | ~$37         | ~$444
+
+Same volumes with a 4-agent Sonnet pipeline (~$0.05/resume):
+
+  Resumes/month | Monthly cost | Annual cost
+  ---------------|--------------|-------------
+  100            | ~$5          | ~$60
+  1,000          | ~$50         | ~$600
+  10,000         | ~$500        | ~$6,000
+
+
+================================================================================
+7. WHAT IF YOU ALSO LLM-IFY ASSESSMENTS, INTERVIEWS, SUMMARIES?
+================================================================================
+
+If, beyond resumes, you add LLM analysis to:
+  - Assessment scoring (src/lib/assessmentAnalysis.ts)
+  - Interview transcript/feedback analysis (src/lib/interviewAnalysis.ts)
+  - Candidate journey summary (src/lib/candidateSummary.ts)
+
+...each is a similar single-call cost (~$0.005-$0.015 with Sonnet/Haiku,
+caching). For a candidate who goes through resume + 2 interview rounds + 1
+assessment + 1 summary = ~5 LLM calls total per candidate's lifecycle, NOT
+per resume. Rough total: ~$0.03-$0.08 per candidate end-to-end with Sonnet,
+~$0.01-$0.03 with Haiku — still a fraction of a cent to a few cents per
+candidate, trivial next to recruiter time saved.
+
+
+================================================================================
+8. RECOMMENDATION
+================================================================================
+
+1. The current $0-cost heuristic engine is good for hard, inspectable signals
+   (skills present/absent, experience years, education level) — keep it as
+   the deterministic baseline/audit trail. It already does a lot of what
+   "AI resume screening" products charge for.
+
+2. If you want LLM-grade improvements (understanding context, paraphrased
+   experience, nuanced fit narratives), add ONE well-designed Claude call per
+   resume (single-agent), using:
+     - Claude Haiku 4.5 for high-volume / cost-sensitive screening
+       (~$0.004-$0.005/resume)
+     - Claude Sonnet 4.6 for higher-quality narrative analysis
+       (~$0.011-$0.014/resume)
+   Use prompt caching on the job description + system prompt — since many
+   resumes are matched against the same JD, this alone cuts repeat-call cost
+   by ~80-90% on the cached portion.
+
+3. Avoid a 3-4 agent pipeline unless you have a concrete reason (e.g.
+   genuinely independent sub-tasks that benefit from separate context
+   windows). It multiplies cost 3-6x for marginal quality gain on a task
+   (resume screening) that doesn't need open-ended multi-step agentic
+   reasoning — this is squarely a "single LLM call" use case per Anthropic's
+   own guidance (classification/extraction/summarization → one request, one
+   response).
+
+4. At realistic volumes for a single company's ATS (hundreds to a few
+   thousand resumes/month), even the most expensive multi-agent Opus
+   pipeline costs $60-$600/month — a rounding error compared to recruiter
+   salaries. The deciding factor should be QUALITY/ACCURACY needs, not raw
+   cost. Don't let a "0.7 credits" number drive the architecture decision —
+   get the actual $/credit conversion from his platform before comparing.
+
+
+================================================================================
+9. KEY TAKEAWAYS (TL;DR)
+================================================================================
+
+  - HireVerse today: $0/resume (no AI calls at all — pure heuristics)
+  - Adding 1 LLM call/resume (single-agent, Sonnet 4.6, cached): ~$0.011
+  - Same with Haiku 4.5 (cheaper, still good for extraction): ~$0.004
+  - A 3-4 agent pipeline: ~$0.015-$0.12/resume depending on model
+  - "0.7 credits" is platform-specific; convert to $ before comparing —
+    plausibly maps to a multi-agent Sonnet/Opus pipeline (~$0.04-$0.08)
+  - For resume screening specifically, single-agent is the right tier per
+    Anthropic's own architecture guidance — multi-agent adds cost without
+    adding value for this task shape.
+
+================================================================================
+END OF ANALYSIS
+================================================================================

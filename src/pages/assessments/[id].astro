@@ -3,20 +3,20 @@ import AppLayout from "../../layouts/AppLayout.astro";
 import { connectDB } from "../../db/connection";
 import { Assessment } from "../../db/models/Assessment";
 import { Candidate } from "../../db/models/Candidate";
-import { Interview } from "../../db/models/Interview";
 import { Types } from "mongoose";
 import { findStage } from "../../lib/pipeline";
-import { generateFocusAreas, type PriorRoundSummary } from "../../lib/interviewGuide";
+import { generateAssessmentQuestions, type AssessmentQuestion } from "../../lib/codingChallenges";
+import { isOverdue } from "../../lib/scheduling";
 
 const { id } = Astro.params;
-if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/interviews');
+if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/assessments');
 
 await connectDB();
 const raw = await Assessment.findById(id).lean();
-if (!raw) return Astro.redirect('/interviews');
+if (!raw) return Astro.redirect('/assessments');
 
 const candidateDoc = await Candidate.findById(raw.candidateId)
-  .populate('jobId', 'title pipeline education level responsibilities')
+  .populate('jobId', 'title pipeline education level responsibilities requiredSkills niceToHaveSkills')
   .lean();
 const job = (candidateDoc?.jobId as any);
 const stage = findStage(job?.pipeline || [], raw.pipelineStage);
@@ -35,6 +35,8 @@ const assessment = {
 
 const isEvaluated = assessment.status === 'evaluated';
 const isPending = assessment.status === 'pending';
+const overdue = isOverdue(assessment.dueDate, assessment.dueTime, assessment.status !== 'evaluated');
+const today = new Date().toISOString().split('T')[0];
 
 const typeLabel = assessment.type === 'coding'
   ? 'Coding Assessment'
@@ -45,46 +47,29 @@ const dim1Label = assessment.type === 'coding' ? 'Code Quality'      : 'Writing 
 const dim2Label = assessment.type === 'coding' ? 'Algorithm / Tests'  : 'Comprehension';
 const dim3Label = 'Problem Solving';
 
-// Suggested focus areas — built from the candidate's resume skill gaps and
-// any concerns raised in prior completed interviews/assessments, so the
-// evaluator knows what to probe for in this round.
-let focusAreas: { title: string; detail: string; questions?: string[] }[] = [];
-if (!isEvaluated && candidateDoc) {
-  const [priorInterviews, priorAssessments] = await Promise.all([
-    Interview.find({
-      candidateId: candidateDoc._id,
-      status: 'completed',
-      analysis: { $ne: null },
-    }, 'round analysis').lean(),
-    Assessment.find({
-      candidateId: candidateDoc._id,
-      _id: { $ne: assessment.id },
-      status: 'evaluated',
-      analysis: { $ne: null },
-    }, 'round analysis').lean(),
-  ]);
-
-  const priorRounds: PriorRoundSummary[] = [
-    ...priorInterviews.map((iv: any) => ({ round: iv.round, type: 'interview' as const, concerns: iv.analysis?.concerns || [] })),
-    ...priorAssessments.map((a: any) => ({ round: a.round, type: 'assessment' as const, concerns: a.analysis?.concerns || [] })),
-  ].filter(r => r.concerns.length > 0);
-
-  focusAreas = generateFocusAreas({
-    jobLevel: job?.level || '',
-    jobEducation: job?.education || '',
-    skillGaps: (candidateDoc as any).skillGaps || [],
-    educationMatch: (candidateDoc as any).educationMatch ?? 100,
+// Suggested questions — generated at assessment-creation time, tailored to
+// this candidate's profile/JD/experience (see codingChallenges.ts). Older
+// assessments created before this existed have an empty array, so fall back
+// to generating them on the fly rather than showing nothing.
+let suggestedQuestions: AssessmentQuestion[] = (raw.suggestedQuestions || []) as AssessmentQuestion[];
+if (!isEvaluated && suggestedQuestions.length === 0 && candidateDoc) {
+  suggestedQuestions = generateAssessmentQuestions({
+    type: assessment.type,
+    jobTitle: job?.title || '',
+    jobLevel: job?.level || 'Mid Level',
     experience: (candidateDoc as any).experience ?? 0,
-    priorRounds,
-    jobResponsibilities: job?.responsibilities || '',
+    requiredSkills: job?.requiredSkills || [],
+    niceToHaveSkills: job?.niceToHaveSkills || [],
+    practicalSkills: (candidateDoc as any).practicalSkills || [],
+    matchedSkills: (candidateDoc as any).skills || [],
   });
 }
 ---
 
-<AppLayout title={`${assessment.candidateName} · ${typeLabel}`} activeNav="interviews">
+<AppLayout title={`${assessment.candidateName} · ${typeLabel}`} activeNav="assessments">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:28px;flex-wrap:wrap;">
     <div style="display:flex;align-items:center;gap:12px;">
-      <a href="/interviews" class="btn btn-ghost btn-sm" style="padding:0;width:28px;height:28px;border-radius:6px;border:1px solid var(--border);">
+      <a href="/assessments" class="btn btn-ghost btn-sm" style="padding:0;width:28px;height:28px;border-radius:6px;border:1px solid var(--border);">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2L4 7l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </a>
       <div>
@@ -110,6 +95,7 @@ if (!isEvaluated && candidateDoc) {
       <div style="font-size:13px;color:var(--fg-body);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         {assessment.jobTitle} · {assessment.round}
         <span class="badge" style={`font-size:10px;background:${assessment.stageColor}22;color:${assessment.stageColor};border:1px solid ${assessment.stageColor}55;`}>{assessment.stageLabel}</span>
+        {overdue && <span class="badge badge-error" style="font-size:10px;">Overdue</span>}
       </div>
     </div>
     <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;">
@@ -117,6 +103,12 @@ if (!isEvaluated && candidateDoc) {
         <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;margin-bottom:4px;">Type</div>
         <div style="font-size:13px;font-weight:500;color:var(--fg);">{typeLabel}</div>
       </div>
+      {assessment.dueDate && (
+        <div style="text-align:center;">
+          <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;margin-bottom:4px;">Due</div>
+          <div style={`font-size:13px;font-weight:500;font-family:'JetBrains Mono',monospace;color:${overdue ? '#ef4444' : 'var(--fg)'};`}>{assessment.dueDate}{assessment.dueTime ? ` ${assessment.dueTime}` : ''}</div>
+        </div>
+      )}
       <div style="text-align:center;">
         <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;margin-bottom:4px;">Status</div>
         <span class={`badge ${assessment.status === 'evaluated' ? 'badge-success' : assessment.status === 'submitted' ? 'badge-info' : 'badge-neutral'}`} style="font-size:11px;">
@@ -193,6 +185,12 @@ if (!isEvaluated && candidateDoc) {
         <!-- Evaluator Notes -->
         <div class="card shadow-lvl-2" style="margin-bottom:20px;">
           <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Evaluator Notes</h2>
+          {assessment.questionAsked && (
+            <div style="margin-bottom:14px;padding:10px 12px;background:var(--bg-soft);border-radius:8px;">
+              <div style="font-size:11px;font-weight:600;color:var(--fg-mute);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.04em;">Question Asked</div>
+              <div style="font-size:13px;color:var(--fg-body);">{assessment.questionAsked}</div>
+            </div>
+          )}
           {assessment.evaluatorNotes ? (
             <p style="font-size:13px;color:var(--fg-body);white-space:pre-wrap;margin:0;">{assessment.evaluatorNotes}</p>
           ) : (
@@ -248,22 +246,22 @@ if (!isEvaluated && candidateDoc) {
     <!-- Pending/Submitted: show instructions + submission form hint -->
     <div class="grid-main-aside" style="--aside-w:300px;">
       <div>
-        {focusAreas.length > 0 && (
+        {suggestedQuestions.length > 0 && (
           <div class="card shadow-lvl-2" style="margin-bottom:20px;">
-            <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Suggested Focus Areas</h2>
-            <p style="font-size:12px;color:var(--fg-mute);margin:0 0 14px;">Based on {assessment.candidateName}'s resume gaps and prior-round concerns — worth weighting the assessment or evaluation toward these.</p>
+            <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 12px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Suggested Questions</h2>
+            <p style="font-size:12px;color:var(--fg-mute);margin:0 0 14px;">
+              {assessment.type === 'coding'
+                ? `Generated for ${assessment.candidateName} based on this role's required skills and their experience level — hand one or more of these to the candidate, or use your own.`
+                : `Generated for ${assessment.candidateName} based on this role's required skills and their experience level.`}
+            </p>
             <div style="display:flex;flex-direction:column;gap:10px;max-height:480px;overflow-y:auto;padding-right:6px;">
-              {focusAreas.map(fa => (
-                <div style="font-size:13px;line-height:1.5;">
-                  <div style="font-weight:600;color:var(--fg);">{fa.title}</div>
-                  <div style="color:var(--fg-body);">{fa.detail}</div>
-                  {fa.questions && fa.questions.length > 0 && (
-                    <ul style="margin:6px 0 0;padding-left:18px;color:var(--fg-mute);">
-                      {fa.questions.map(q => (
-                        <li style="margin-bottom:2px;">{q}</li>
-                      ))}
-                    </ul>
-                  )}
+              {suggestedQuestions.map((q, i) => (
+                <div style="font-size:13px;line-height:1.5;padding:10px 12px;background:var(--bg-soft);border-radius:8px;">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                    <span class="badge" style="font-size:10px;">{q.skill}</span>
+                    <span style="font-size:11px;color:var(--fg-mute);text-transform:capitalize;">{q.difficulty}</span>
+                  </div>
+                  <div style="color:var(--fg-body);">{i + 1}. {q.question}</div>
                 </div>
               ))}
             </div>
@@ -293,6 +291,7 @@ if (!isEvaluated && candidateDoc) {
               : `Waiting for ${assessment.candidateName} to complete the ${typeLabel.toLowerCase()}.`}
           </p>
           <button id="evaluate-btn-aside" class="btn btn-primary" style="width:100%;border-radius:6px;">Evaluate &amp; Analyse</button>
+          <button id="reschedule-btn" class="btn btn-secondary" style="width:100%;border-radius:6px;margin-top:8px;">{assessment.dueDate ? 'Reschedule Due Date' : 'Set Due Date'}</button>
         </div>
         <a href={`/candidates/${assessment.candidateId}`} class="btn btn-secondary" style="width:100%;border-radius:6px;display:block;text-align:center;">View Candidate</a>
       </div>
@@ -301,10 +300,30 @@ if (!isEvaluated && candidateDoc) {
 </AppLayout>
 
 <!-- Evaluate modal -->
-<div id="evaluate-modal" style="display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;padding:20px;">
-  <div style="position:relative;z-index:1;width:560px;max-width:100%;max-height:90vh;overflow-y:auto;background:var(--surface-card,var(--surface));border-radius:12px;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+<div id="evaluate-modal" style="display:none;position:fixed;inset:0;z-index:100;align-items:center;justify-content:center;padding:20px;">
+  <div style="position:absolute;inset:0;background:rgba(0,0,0,0.6);" id="modal-overlay"></div>
+  <div class="card shadow-lvl-5" style="position:relative;z-index:1;width:560px;max-width:100%;max-height:90vh;overflow-y:auto;padding:28px;">
     <h2 style="font-size:18px;font-weight:600;color:var(--fg);margin:0 0 8px;">Evaluate Assessment</h2>
     <p style="font-size:13px;color:var(--fg-mute);margin:0 0 20px;">Describe how the candidate performed — the AI analyses your notes alongside the submission and produces scores, strengths, concerns, and a move-forward recommendation. Be specific: concrete observations carry the most weight.</p>
+
+    <div style="margin-bottom:16px;">
+      <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Question Asked <span style="color:#ee0000;">*</span></label>
+      <select id="eval-question-select" style="display:none;">
+        <option value="">Select a question…</option>
+        {suggestedQuestions.map(q => (
+          <option value={q.question} data-label={`[${q.skill}] ${q.question}`} selected={assessment.questionAsked === q.question}>[{q.skill}] {q.question}</option>
+        ))}
+        <option value="__other__" data-label="Other (the interviewer used a different question)" selected={!!assessment.questionAsked && !suggestedQuestions.some(q => q.question === assessment.questionAsked)}>Other (the interviewer used a different question)</option>
+      </select>
+      <div id="eval-question-dropdown" style="position:relative;margin-bottom:8px;">
+        <button type="button" id="eval-question-toggle" class="input" style="height:34px;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;background:var(--bg-soft);">
+          <span id="eval-question-toggle-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--fg-mute);">Select a question…</span>
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="flex-shrink:0;"><path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div id="eval-question-list" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;max-height:240px;overflow-y:auto;background:var(--bg);border:1px solid var(--border);border-radius:6px;box-shadow:var(--shadow-lvl-3, 0 4px 16px rgba(0,0,0,0.15));z-index:10;"></div>
+      </div>
+      <textarea id="eval-question-custom" class="input" style="height:70px;font-size:12px;display:none;" placeholder="Enter the question/task that was actually given to the candidate…">{!suggestedQuestions.some(q => q.question === assessment.questionAsked) ? (assessment.questionAsked || '') : ''}</textarea>
+    </div>
 
     {assessment.type === 'coding' && (
       <div style="margin-bottom:16px;">
@@ -340,6 +359,30 @@ if (!isEvaluated && candidateDoc) {
   </div>
 </div>
 
+<!-- Reschedule modal -->
+<div id="reschedule-modal" style="display:none;position:fixed;inset:0;z-index:100;align-items:center;justify-content:center;padding:20px;">
+  <div style="position:absolute;inset:0;background:rgba(0,0,0,0.6);" id="reschedule-overlay"></div>
+  <div class="card shadow-lvl-5" style="position:relative;z-index:1;width:420px;max-width:100%;padding:28px;">
+    <h2 style="font-size:18px;font-weight:600;color:var(--fg);margin:0 0 8px;">{assessment.dueDate ? 'Reschedule Due Date' : 'Set Due Date'}</h2>
+    <p style="font-size:13px;color:var(--fg-mute);margin:0 0 20px;">Set or change the deadline for {assessment.candidateName} to complete this {typeLabel.toLowerCase()}. The candidate is not automatically re-notified — let them know separately if needed.</p>
+    <div class="grid-cols-2" style="margin-bottom:20px;">
+      <div>
+        <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Date</label>
+        <input id="reschedule-date" type="date" class="input" style="height:36px;" min={today} value={assessment.dueDate || ''} />
+      </div>
+      <div>
+        <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Time</label>
+        <input id="reschedule-time" type="time" class="input" style="height:36px;" value={assessment.dueTime || ''} />
+      </div>
+    </div>
+    <div id="reschedule-error" style="display:none;font-size:13px;color:#ef4444;margin-bottom:12px;"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button id="reschedule-cancel" class="btn btn-secondary">Cancel</button>
+      <button id="reschedule-save" class="btn btn-primary">Save</button>
+    </div>
+  </div>
+</div>
+
 <script define:vars={{ assessmentId: assessment.id, assessmentType: assessment.type }}>
   const modal = document.getElementById('evaluate-modal');
 
@@ -352,7 +395,83 @@ if (!isEvaluated && candidateDoc) {
   document.getElementById('evaluate-btn')?.addEventListener('click', openModal);
   document.getElementById('evaluate-btn-aside')?.addEventListener('click', openModal);
   document.getElementById('eval-cancel')?.addEventListener('click', closeModal);
-  modal?.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+  document.getElementById('modal-overlay')?.addEventListener('click', closeModal);
+
+  // Question Asked: toggle custom textarea when "Other" is selected
+  const questionSelect = document.getElementById('eval-question-select');
+  const questionCustom = document.getElementById('eval-question-custom');
+  function syncQuestionCustomVisibility() {
+    if (!questionSelect || !questionCustom) return;
+    questionCustom.style.display = questionSelect.value === '__other__' ? 'block' : 'none';
+  }
+  syncQuestionCustomVisibility();
+  questionSelect?.addEventListener('change', syncQuestionCustomVisibility);
+
+  // Question Asked: custom dropdown (wraps long question text within the modal,
+  // unlike a native <select> whose option popup ignores the container width)
+  const questionToggle = document.getElementById('eval-question-toggle');
+  const questionToggleLabel = document.getElementById('eval-question-toggle-label');
+  const questionList = document.getElementById('eval-question-list');
+
+  function closeQuestionList() {
+    if (questionList) questionList.style.display = 'none';
+  }
+
+  function renderQuestionList() {
+    if (!questionSelect || !questionList) return;
+    questionList.innerHTML = '';
+    Array.from(questionSelect.options).forEach(opt => {
+      if (!opt.value) return;
+      const item = document.createElement('div');
+      item.textContent = opt.dataset.label || opt.textContent || '';
+      item.dataset.value = opt.value;
+      item.style.cssText = 'padding:8px 12px;font-size:12.5px;line-height:1.4;color:var(--fg-body);cursor:pointer;white-space:normal;word-break:break-word;border-bottom:1px solid var(--border);';
+      if (opt.value === questionSelect.value) {
+        item.style.background = 'var(--bg-soft)';
+        item.style.fontWeight = '500';
+      }
+      item.addEventListener('mouseenter', () => { item.style.background = 'var(--bg-soft)'; });
+      item.addEventListener('mouseleave', () => {
+        item.style.background = opt.value === questionSelect.value ? 'var(--bg-soft)' : '';
+      });
+      item.addEventListener('click', () => {
+        questionSelect.value = opt.value;
+        questionSelect.dispatchEvent(new Event('change'));
+        updateQuestionToggleLabel();
+        closeQuestionList();
+      });
+      questionList.appendChild(item);
+    });
+    const last = questionList.lastElementChild;
+    if (last) last.style.borderBottom = 'none';
+  }
+
+  function updateQuestionToggleLabel() {
+    if (!questionSelect || !questionToggleLabel) return;
+    const opt = questionSelect.options[questionSelect.selectedIndex];
+    const label = opt?.dataset.label || opt?.textContent || '';
+    if (questionSelect.value) {
+      questionToggleLabel.textContent = label;
+      questionToggleLabel.style.color = 'var(--fg)';
+    } else {
+      questionToggleLabel.textContent = 'Select a question…';
+      questionToggleLabel.style.color = 'var(--fg-mute)';
+    }
+  }
+
+  questionToggle?.addEventListener('click', () => {
+    if (!questionList) return;
+    if (questionList.style.display === 'none') {
+      renderQuestionList();
+      questionList.style.display = 'block';
+    } else {
+      closeQuestionList();
+    }
+  });
+  document.addEventListener('click', (e) => {
+    if (!document.getElementById('eval-question-dropdown')?.contains(e.target)) closeQuestionList();
+  });
+  updateQuestionToggleLabel();
 
   // Character hint on notes
   const evalNotes = document.getElementById('eval-notes');
@@ -375,7 +494,11 @@ if (!isEvaluated && candidateDoc) {
   });
 
   document.getElementById('mark-submitted-btn')?.addEventListener('click', async () => {
-    const submission = document.getElementById('submission-input')?.value || '';
+    const submission = document.getElementById('submission-input')?.value.trim() || '';
+    if (!submission) {
+      window.hvToast('Add the candidate\'s code, answer, or a link before marking as submitted.', 'error');
+      return;
+    }
     const res = await fetch(`/api/assessments/${assessmentId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -397,6 +520,19 @@ if (!isEvaluated && candidateDoc) {
       evalError.style.display = 'block';
       return;
     }
+
+    const questionSelectEl = document.getElementById('eval-question-select');
+    const questionCustomEl = document.getElementById('eval-question-custom');
+    const selectedQuestion = questionSelectEl?.value || '';
+    const questionAsked = selectedQuestion === '__other__'
+      ? (questionCustomEl?.value.trim() || '')
+      : selectedQuestion;
+    if (!questionAsked) {
+      evalError.textContent = 'Select the question that was asked, or choose "Other" and type the question that was actually given.';
+      evalError.style.display = 'block';
+      return;
+    }
+
     evalError.style.display = 'none';
     evalSave.disabled = true;
     evalSave.textContent = 'Analysing…';
@@ -404,6 +540,7 @@ if (!isEvaluated && candidateDoc) {
     const body = {
       status: 'evaluated',
       evaluatorNotes: notes,
+      questionAsked,
       submission: document.getElementById('eval-submission')?.value.trim() || '',
     };
     if (assessmentType === 'coding') {
@@ -440,6 +577,43 @@ if (!isEvaluated && candidateDoc) {
       window.hvToast(err.error || 'Re-analysis failed', 'error');
       btn.disabled = false;
       btn.textContent = 'Re-analyse';
+    }
+  });
+
+  // Reschedule due date
+  const rescheduleModal = document.getElementById('reschedule-modal');
+  document.getElementById('reschedule-btn')?.addEventListener('click', () => {
+    if (rescheduleModal) rescheduleModal.style.display = 'flex';
+  });
+  document.getElementById('reschedule-cancel')?.addEventListener('click', () => {
+    if (rescheduleModal) rescheduleModal.style.display = 'none';
+  });
+  document.getElementById('reschedule-overlay')?.addEventListener('click', () => {
+    if (rescheduleModal) rescheduleModal.style.display = 'none';
+  });
+  document.getElementById('reschedule-save')?.addEventListener('click', async () => {
+    const btn = document.getElementById('reschedule-save');
+    const errorEl = document.getElementById('reschedule-error');
+    const dueDate = document.getElementById('reschedule-date')?.value || '';
+    const dueTime = document.getElementById('reschedule-time')?.value || '';
+    if (errorEl) errorEl.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    const res = await fetch(`/api/assessments/${assessmentId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dueDate, dueTime }),
+    });
+    if (res.ok) {
+      window.location.reload();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      if (errorEl) {
+        errorEl.textContent = err.error || 'Failed to update due date.';
+        errorEl.style.display = 'block';
+      }
+      btn.disabled = false;
+      btn.textContent = 'Save';
     }
   });
 </script>

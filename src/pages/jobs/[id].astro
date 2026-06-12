@@ -5,7 +5,7 @@ import { Job } from "../../db/models/Job";
 import { Candidate } from "../../db/models/Candidate";
 import { Interview } from "../../db/models/Interview";
 import { Types } from "mongoose";
-import { sortedPipeline, bucketForCandidate, getValidNextStages, getIconSvg } from "../../lib/pipeline";
+import { sortedPipeline, bucketForCandidate, getIconSvg } from "../../lib/pipeline";
 import { formatExperience } from "../../lib/resumeAnalysis";
 
 const { id } = Astro.params;
@@ -27,7 +27,6 @@ const jobCandidates = rawCandidates.map((c, i) => ({
   applied: new Date(c.createdAt).toISOString().split('T')[0],
   stage: pipeline.find(s => s.key === c.currentStage),
   bucket: bucketForCandidate(c, job.pipeline),
-  validStages: getValidNextStages(job.pipeline, c.currentStage),
 }));
 
 const rawInterviews = await Interview.find({ jobId: id })
@@ -216,11 +215,7 @@ const avgExpYears = jobCandidates.length ? jobCandidates.reduce((s, c) => s + c.
                     {c.rejected ? (
                       <span class="badge badge-error">Rejected</span>
                     ) : (
-                      <select class="select" style="width:130px;height:28px;font-size:12px;" data-cand-id={c.id} data-current-stage={c.currentStage} onchange="updateStage(this)">
-                        {c.validStages.map(s => (
-                          <option value={s.key} selected={c.currentStage === s.key}>{s.label}</option>
-                        ))}
-                      </select>
+                      <span class="badge" style={`font-size:11px;background:${c.stage?.color || '#6b7280'}22;color:${c.stage?.color || '#6b7280'};border:1px solid ${c.stage?.color || '#6b7280'}55;`}>{c.stage?.label || c.currentStage}</span>
                     )}
                   </td>
                   <td style="font-size:12px;color:var(--fg-body);">{c.recommendation}</td>
@@ -345,41 +340,6 @@ const avgExpYears = jobCandidates.length ? jobCandidates.reduce((s, c) => s + c.
       });
     });
   });
-
-  // Stage transitions
-  async function updateStage(sel, confirmSkipInterview) {
-    const id = sel.dataset.candId;
-    const previousStage = sel.dataset.currentStage || '';
-    const currentStage = sel.value;
-    const res = await fetch(`/api/candidates/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ currentStage, ...(confirmSkipInterview ? { confirmSkipInterview: true } : {}) }),
-    });
-    if (res.ok) {
-      window.location.reload();
-      return;
-    }
-    const err = await res.json().catch(() => ({}));
-    // The API blocks moving someone past the interview stage with no analyzed
-    // interview on file — surfacing that gap here, with a deliberate way past
-    // it, rather than letting the stage and the AI read silently fall out of sync.
-    if (err.code === 'NO_ANALYZED_INTERVIEW') {
-      const proceed = await window.hvConfirm({
-        title: 'No analyzed interview on record',
-        message: `${err.error}\n\nMove them anyway?`,
-        confirmLabel: 'Move anyway',
-        cancelLabel: 'Go add feedback first',
-        destructive: true,
-      });
-      if (proceed) { await updateStage(sel, true); return; }
-      sel.value = previousStage;
-      return;
-    }
-    window.hvToast(err.error || 'Failed to update stage', 'error');
-    sel.value = previousStage;
-  }
-  window.updateStage = updateStage;
 
   async function rejectCandidate(btn) {
     const id = btn.dataset.candId;

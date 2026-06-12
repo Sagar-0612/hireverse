@@ -44,12 +44,13 @@ const candidates = rawCandidates
   .filter(c => c.assessmentStages.length > 0);
 
 const preselected = Astro.url.searchParams.get('candidate') || '';
+const today = new Date().toISOString().split('T')[0];
 ---
 
-<AppLayout title="Create Assessment" activeNav="interviews">
+<AppLayout title="Create Assessment" activeNav="assessments">
   <div style="max-width:640px;">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:28px;">
-      <a href="/interviews" class="btn btn-ghost btn-sm" style="padding:0;width:28px;height:28px;border-radius:6px;border:1px solid var(--border);">
+      <a href="/assessments" class="btn btn-ghost btn-sm" style="padding:0;width:28px;height:28px;border-radius:6px;border:1px solid var(--border);">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2L4 7l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </a>
       <div>
@@ -95,13 +96,28 @@ const preselected = Astro.url.searchParams.get('candidate') || '';
       </div>
 
       <div class="card shadow-lvl-2">
+        <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Due Date (Optional)</h2>
+        <div class="grid-cols-2">
+          <div>
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Date</label>
+            <input type="date" name="dueDate" class="input" style="height:36px;" min={today} />
+          </div>
+          <div>
+            <label style="font-size:13px;font-weight:500;color:var(--fg);display:block;margin-bottom:6px;">Time</label>
+            <input type="time" name="dueTime" class="input" style="height:36px;" />
+          </div>
+        </div>
+        <p style="font-size:12px;color:var(--fg-mute);margin:6px 0 0;">Sets a deadline for the candidate to complete this assessment by. Leave blank if there's no fixed deadline.</p>
+      </div>
+
+      <div class="card shadow-lvl-2">
         <h2 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 16px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Instructions (Optional)</h2>
         <textarea name="instructions" class="input" style="height:120px;padding:10px 12px;resize:vertical;" placeholder="Describe the task, problem statement, time limit, language constraints, or anything the candidate needs to know…"></textarea>
         <p style="font-size:12px;color:var(--fg-mute);margin:6px 0 0;">You can add or update instructions later from the assessment page.</p>
       </div>
 
       <div style="display:flex;gap:10px;justify-content:flex-end;padding-bottom:32px;">
-        <a href="/interviews" class="btn btn-secondary">Cancel</a>
+        <a href="/assessments" class="btn btn-secondary">Cancel</a>
         <button type="submit" id="submit-btn" class="btn btn-primary">Create Assessment</button>
       </div>
     </form>

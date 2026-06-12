@@ -36,7 +36,7 @@ const NEG = (re: RegExp, label: string, weight = 1): SignalPattern => ({ re, lab
 // like that is healthy self-awareness, not a concern — everyone has gaps. A
 // *pattern* of them across a conversation is the real signal, so these are
 // counted (not just detected once) and only weighed in once they cluster.
-const UNCERTAINTY_ADMISSION_RE = /\bi\s+(?:don'?t|do\s+not)\s+(?:know|remember|recall)\b|\bi\s+(?:can'?t|cannot)\s+(?:recall|remember|think\s+of\s+(?:any|a))\b|\bi\s+(?:haven'?t|have\s+not)\s+(?:worked\s+(?:much\s+)?(?:on|with)|used|done\s+much|tried|written)\b|\bnot\s+much\b[^.?!]{0,25}\b(?:experience|exposure|knowledge|familiarity)\b|\bi\s+(?:have\s+)?(?:heard|read)\s+(?:about|of)\s+(?:it|that|them)\s+but\s+(?:haven'?t|have\s+not|never)\b|\bi\s+(?:usually|just)\s+(?:use\s+)?whichever\s+(?:one\s+)?works?\b|\bi\s+(?:don'?t|do\s+not)\s+have\s+(?:much|any)\s+(?:experience|exposure|idea)\b/gi;
+const UNCERTAINTY_ADMISSION_RE = /\bi\s+(?:don'?t|do\s+not)\s+(?:know|remember|recall)\b|\bi\s+(?:can'?t|cannot)\s+(?:recall|remember|think\s+of\s+(?:any|a))\b|\bi\s+(?:haven'?t|have\s+not)\s+(?:worked\s+(?:much\s+)?(?:on|with)|used|done\s+much|tried|written)\b|\bnot\s+much\b[^.?!]{0,25}\b(?:experience|exposure|knowledge|familiarity)\b|\bi\s+(?:have\s+)?(?:heard|read)\s+(?:about|of)\s+(?:it|that|them)\s+but\s+(?:haven'?t|have\s+not|never)\b|\bi\s+(?:usually|just)\s+(?:use\s+)?whichever\s+(?:one\s+)?works?\b|\bi\s+(?:don'?t|do\s+not)\s+have\s+(?:much|any)\s+(?:experience|exposure|idea)\b|\bi'?m\s+not\s+(?:really\s+|very\s+|that\s+)?(?:familiar|sure|confident)\s+with\b|\bi\s+(?:never|haven'?t|have\s+not)\s+(?:really\s+)?(?:got(?:ten)?\s+(?:a\s+chance\s+)?to|had\s+(?:a\s+)?(?:chance|opportunity)\s+to)\b|\bi'?d\s+(?:have\s+to|need\s+to)\s+(?:look\s+(?:that|it)\s+up|google\s+(?:that|it)|check)\b/gi;
 
 function countMatches(text: string, re: RegExp): number {
   const matches = text.match(re);
@@ -81,6 +81,13 @@ const TECHNICAL_SIGNALS: SignalPattern[] = [
   // without an intervening domain-keyword. This is the interviewer's own
   // explicit JD-relative judgment, so it carries real weight.
   NEG(/\blacks?\s+(?:the\s+)?(?:depth|experience|seniority|maturity|skills?|expertise)\b[^.?!]{0,60}\b(?:expected|required|needed|necessary)\b[^.?!]{0,50}\b(?:senior|lead|principal|staff|architect|role|position|level)\b/i, 'interviewer explicitly judged the candidate as not yet at the depth this specific role calls for', 3.5),
+  // Third-person version of the first-person uncertainty admissions below —
+  // an interviewer summarizing "candidate has limited exposure to X" / "isn't
+  // familiar with Y" is describing the same gap the candidate might phrase as
+  // "I haven't worked with that", but in their own write-up rather than a
+  // transcript quote.
+  NEG(/\b(?:has|had|with)?\s*(?:limited|no|little)\s+(?:exposure|experience|familiarity|background)\s+(?:to|with|in)\b/i, 'interviewer noted limited exposure/experience with a relevant area', 1.5),
+  NEG(/\b(?:isn'?t|wasn'?t|not|aren'?t)\s+(?:very\s+)?familiar\s+with\b/i, 'interviewer noted the candidate was not familiar with something relevant', 1.5),
 ];
 
 const COMMUNICATION_SIGNALS: SignalPattern[] = [
@@ -144,6 +151,11 @@ const VERDICT_SIGNALS: SignalPattern[] = [
   NEG(/\b(?:do not recommend|wouldn'?t recommend|would not recommend|not a fit|not a good fit|pass on (?:this|the) candidate|would not (?:hire|move (?:them|him|her) forward)|do not (?:hire|advance|move (?:them|him|her) forward))\b/i, 'interviewer explicitly recommended against advancing', 4.5),
   NEG(/\b(?:red flag|major concern|serious concern|dealbreaker|deal[- ]breaker|would not trust|integrity concern|inconsistent (?:story|answers|account))\b/i, 'interviewer raised a serious red flag', 5),
   NEG(/\b(?:not (?:ready|there) yet|borderline|on the fence|mixed feelings|some reservations|hesitant to recommend)\b/i, 'interviewer expressed real reservations', 1.5),
+  // Common shorthand verdicts from quick post-interview scorecards — "no
+  // hire" / "thumbs down" carry the same weight as the longer-form negative
+  // verdicts above but are short enough that they wouldn't match those phrases.
+  NEG(/\b(?:no[\s-]hire|thumbs[\s-]down|hard\s+pass|strong\s+no)\b/i, 'interviewer gave a "no hire" verdict', 4.5),
+  POS(/\b(?:strong\s+(?:yes|hire)|thumbs[\s-]up|definite\s+hire|easy\s+yes)\b/i, 'interviewer gave a clear "hire" verdict', 4),
 ];
 
 function scanText(text: string, signals: SignalPattern[]): { net: number; hits: { label: string; positive: boolean; weight: number }[] } {

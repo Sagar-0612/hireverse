@@ -98,7 +98,7 @@ export async function extractResumeText(buffer: Buffer, mimeType: string, filena
 }
 
 function extractNameFromFilename(filename: string): string {
-  let name = filename.replace(/\.(pdf|docx|doc|txt)$/i, '');
+  let name = filename.replace(/\.[a-zA-Z0-9]{1,5}$/, '');
   name = name.replace(/[-_]/g, ' ');
   name = name.replace(/([a-z])([A-Z])/g, '$1 $2');
   name = name.replace(/\b(resume|cv|curriculum|vitae|application|final|updated|new|v\d+)\b/gi, '');
@@ -139,7 +139,19 @@ function extractName(text: string, filename: string): string {
       .join(' ');
   }
 
-  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(0, 15);
+  // Markdown-formatted resumes prefix header/emphasis lines with "#", "##",
+  // "**", "-", etc. — strip that markup before running the name heuristics
+  // below, otherwise a leading "# " makes "# Arjun Mehta" look like a
+  // 3-word non-name line and the name falls through to the filename.
+  const lines = text.split(/\r?\n/)
+    .map(l => l.trim()
+      .replace(/^#{1,6}\s*/, '')
+      .replace(/^[-*+>]\s+/, '')
+      .replace(/^\*\*(.*)\*\*$/, '$1')
+      .replace(/\*\*/g, '')
+      .trim())
+    .filter(Boolean)
+    .slice(0, 15);
   // Single-word names (e.g. "Muskan") are valid — capture one from the first 4
   // header lines as a fallback before the filename, but keep searching for a
   // two-word form in case the full name appears slightly further down.
@@ -186,7 +198,19 @@ function extractEmail(text: string): string {
   return match ? match[0].toLowerCase() : '';
 }
 
+// "Phone: +91-9988776655" / "Mobile No: 9876543210" — when a line explicitly
+// labels its number as a phone, that's a far stronger signal than any other
+// 10-13 digit run on the page (an employee ID, postal code, or a date range
+// rendered without separators can all accidentally look like a phone number
+// to the unlabeled fallback below).
+const PHONE_LABELED = /\b(?:phone|mobile|cell|contact|tel(?:ephone)?|whatsapp)\s*(?:no\.?|number|num)?\s*[:\-]?\s*(\+?\(?\d[\d\s().-]{7,16}\d)/i;
+
 function extractPhone(text: string): string {
+  const labeled = text.match(PHONE_LABELED);
+  if (labeled) {
+    const digits = labeled[1].replace(/\D/g, '');
+    if (digits.length >= 10 && digits.length <= 13) return labeled[1].trim();
+  }
   const candidates = text.match(/(\+\d{1,3}[\s.-]?)?\(?\d{2,5}\)?[\s.-]?\d{2,5}[\s.-]?\d{2,5}(?:[\s.-]?\d{2,4})?/g) || [];
   for (const c of candidates) {
     const digits = c.replace(/\D/g, '');
@@ -203,6 +227,18 @@ const LOCATION_STRICT = /^[A-Z][a-zA-Z.\s]{1,30},\s?[A-Z]{2}$/;
 // read with less certainty.
 const LOCATION_LOOSE = /^[A-Z][a-zA-Z.\s]{1,30},\s?[A-Z][a-zA-Z.\s]{1,30}(?:,\s?[A-Z][a-zA-Z.\s]{1,30})?$/;
 const LOCATION_LABELED = /(?:location|address|based\s+in|residing\s+in|city)\s*[:\-]\s*([A-Z][a-zA-Z,.\s]{2,40})/i;
+// Remote-work resumes commonly prefix their location with "Remote" —
+// "Remote (Gurgaon, India)", "Remote - Bangalore, India", "Remote: Pune,
+// India" — which the strict/loose "City, Region" patterns above don't match
+// because of the leading word and wrapping punctuation. Stripping a leading
+// "Remote" qualifier surfaces the actual city/country underneath so it isn't
+// reported as "Location Not Found" just because the candidate works remotely.
+const REMOTE_LOCATION_RE = /^remote\s*(?:\(([^)]+)\)|[-–—:,]\s*(.+))$/i;
+const stripRemotePrefix = (s: string): string => {
+  const m = s.match(REMOTE_LOCATION_RE);
+  if (!m) return s;
+  return (m[1] || m[2] || '').trim();
+};
 // Bare single/double-word capitalized line — could be a city, could easily be
 // a job title or section header, hence the lowest confidence tier.
 const LOCATION_BARE = /^[A-Z][a-zA-Z.]{2,20}(?:\s[A-Z][a-zA-Z.]{2,20})?$/;
@@ -251,7 +287,7 @@ function findLocationNearContact(
 function extractLocation(text: string, candidateName: string, email: string, phone: string): { location: string; confidence: LocationConfidence } {
   const allLines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   const lines = allLines.slice(0, 12);
-  const clean = (l: string) => l.replace(/[|•].*$/, '').trim();
+  const clean = (l: string) => stripRemotePrefix(l.replace(/[|•].*$/, '').trim());
   const isNoisy = (l: string) => /@|\d{4,}|https?:/i.test(l);
   const normalizedName = normalizeForCompare(candidateName);
   const isCandidateName = (l: string) => {
@@ -278,8 +314,9 @@ function extractLocation(text: string, candidateName: string, email: string, pho
   // both miss the location segment — scan each token individually instead.
   for (const raw of allLines.slice(0, 15)) {
     if (!/[|•~]/.test(raw)) continue;
-    for (const seg of raw.split(/[|•~]/).map(s => s.trim()).filter(Boolean)) {
-      if (seg.length >= 60 || isNoisy(seg) || isCandidateName(seg) || SECTION_HEADER_RE.test(seg)) continue;
+    for (const rawSeg of raw.split(/[|•~]/).map(s => s.trim()).filter(Boolean)) {
+      if (rawSeg.length >= 60 || isNoisy(rawSeg) || isCandidateName(rawSeg) || SECTION_HEADER_RE.test(rawSeg)) continue;
+      const seg = stripRemotePrefix(rawSeg);
       if (LOCATION_STRICT.test(seg)) return { location: seg, confidence: 'high' };
       if (LOCATION_LOOSE.test(seg)) return { location: seg, confidence: 'medium' };
     }
@@ -323,12 +360,24 @@ const monthIndex = (name?: string): number | null => {
 
 const DAY = '\\d{1,2}\\s+';
 const MONTH_NAME = '(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?';
-// Captures month name (when present) alongside the year on both ends, so a
-// range's actual covered span can be measured to the month rather than just
-// "which calendar years did this touch" — the difference between "Sept 2019 –
-// May 2023" spanning ~3.7 years vs. a naive year-diff calling it 4.
+// Many resumes (especially LinkedIn-exported or template-based ones) write
+// dates as "03/2021" or "03-2021" instead of "Mar 2021" — without this, every
+// such range was silently invisible to extractExperience and the candidate
+// scored zero experience regardless of how much real history was on the page.
+const NUM_MONTH = '(?:0?[1-9]|1[0-2])';
+// One end of a range: optional day + month-name ("15 Mar"/"Mar"), OR a numeric
+// month + separator ("03/"), OR neither — followed by a 4-digit year. Exactly
+// one of the month-name group or numeric-month group is set when a month is
+// present; both are absent for a bare year ("2019 - 2023").
+const DATE_TOKEN = `(?:${DAY})?(?:(?:${MONTH_NAME})\\s+|(${NUM_MONTH})[\\/\\-.]\\s*)?(\\d{4})`;
+// Captures month (named or numeric, when present) alongside the year on both
+// ends, so a range's actual covered span can be measured to the month rather
+// than just "which calendar years did this touch" — the difference between
+// "Sept 2019 – May 2023" spanning ~3.7 years vs. a naive year-diff calling it 4.
+// Also recognizes "ongoing"/"till date"/"till now"/"to date" alongside the
+// existing "present"/"current"/"now" as open-ended end markers.
 const RANGE_RE = new RegExp(
-  `(?:${DAY})?(?:${MONTH_NAME}\\s+)?(\\d{4})\\s*(?:[-–—]|to)\\s*(?:${DAY})?(?:${MONTH_NAME}\\s+)?(present|current|now|\\d{4})`,
+  `${DATE_TOKEN}\\s*(?:[-–—]|to)\\s*(?:(present|current|now|ongoing|till\\s+date|till\\s+now|to\\s+date)|${DATE_TOKEN})`,
   'gi'
 );
 
@@ -362,18 +411,18 @@ function extractExperience(text: string): number {
     const windowEnd = Math.min(text.length, m.index + m[0].length + 30);
     if (EDU_NEARBY_RE.test(text.slice(windowStart, windowEnd))) continue;
 
-    const startYear = parseInt(m[2], 10);
-    const endRaw = m[4].toLowerCase();
-    const isPresent = /present|current|now/.test(endRaw);
-    const endYear = isPresent ? now.getFullYear() : parseInt(endRaw, 10);
+    const startYear = parseInt(m[3], 10);
+    const isPresent = !!m[4];
+    const endYear = isPresent ? now.getFullYear() : parseInt(m[7], 10);
     if (startYear < 1960 || startYear > now.getFullYear()) continue;
     if (endYear < startYear || endYear > now.getFullYear()) continue;
 
     // A bare year ("2019 - 2023") gives no month — treat it as covering the
     // full calendar year so it doesn't get shortchanged against ranges that
-    // do specify months.
-    const startMonth = monthIndex(m[1]) ?? 0;
-    const endMonth = isPresent ? now.getMonth() : (monthIndex(m[3]) ?? 11);
+    // do specify months. m[2]/m[6] hold a numeric month ("03" -> March,
+    // 0-indexed as 2) when the range used "MM/YYYY" instead of a month name.
+    const startMonth = monthIndex(m[1]) ?? (m[2] ? parseInt(m[2], 10) - 1 : null) ?? 0;
+    const endMonth = isPresent ? now.getMonth() : (monthIndex(m[5]) ?? (m[6] ? parseInt(m[6], 10) - 1 : null) ?? 11);
 
     const start = startYear * 12 + startMonth;
     const end = Math.min(endYear * 12 + endMonth, currentYM);
@@ -632,7 +681,18 @@ export function getRecommendation(score: number): string {
 }
 
 export function analyzeResume(text: string, filename: string, job: JobLike): ResumeAnalysis {
-  const cleaned = text.replace(/[ ]/g, ' ').trim();
+  // Markdown-formatted resumes wrap labels/headings in "**bold**", "# headers"
+  // and "- bullets" - strip that markup up front so every downstream regex
+  // (name, location, phone, etc.) sees the same plain-text shape it expects
+  // from a .txt/.docx resume, instead of "**Location:**" failing to match
+  // location-style labels because of the stray asterisks.
+  const cleaned = text
+    .replace(/[ ]/g, ' ')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/__(.*?)__/g, '$1')
+    .replace(/^#{1,6}[ 	]+/gm, '')
+    .replace(/^[ 	]*[-*+][ 	]+/gm, '')
+    .trim();
 
   const name = extractName(cleaned, filename);
   const email = extractEmail(cleaned);

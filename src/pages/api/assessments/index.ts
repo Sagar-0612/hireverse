@@ -5,6 +5,7 @@ import { Candidate } from '../../../db/models/Candidate';
 import { Job } from '../../../db/models/Job';
 import { findStage, isValidStageTransition, sortedPipeline } from '../../../lib/pipeline';
 import { inferAssessmentType } from '../../../lib/assessmentAnalysis';
+import { generateAssessmentQuestions } from '../../../lib/codingChallenges';
 import { logActivity } from '../../../lib/activity';
 import { sendEmail, sendWhatsApp } from '../../../lib/notifications';
 
@@ -15,7 +16,7 @@ export const POST: APIRoute = async ({ request }) => {
   await connectDB();
   try {
     const body = await request.json();
-    const { candidateId, pipelineStage, instructions } = body;
+    const { candidateId, pipelineStage, instructions, dueDate, dueTime } = body;
 
     if (!candidateId || !pipelineStage) {
       return json({ error: 'candidateId and pipelineStage are required.' }, 400);
@@ -45,6 +46,17 @@ export const POST: APIRoute = async ({ request }) => {
 
     const type = inferAssessmentType(requestedStage.key, requestedStage.label);
 
+    const suggestedQuestions = generateAssessmentQuestions({
+      type,
+      jobTitle: job.title,
+      jobLevel: job.level || 'Mid Level',
+      experience: candidate.experience || 0,
+      requiredSkills: job.requiredSkills || [],
+      niceToHaveSkills: job.niceToHaveSkills || [],
+      practicalSkills: candidate.practicalSkills || [],
+      matchedSkills: candidate.skills || [],
+    });
+
     const assessment = await Assessment.create({
       candidateId,
       jobId: candidate.jobId,
@@ -53,6 +65,9 @@ export const POST: APIRoute = async ({ request }) => {
       type,
       status: 'pending',
       instructions: instructions || '',
+      suggestedQuestions,
+      dueDate: dueDate || '',
+      dueTime: dueTime || '',
     });
 
     // Auto-advance the candidate to the selected stage (same logic as interview scheduling).

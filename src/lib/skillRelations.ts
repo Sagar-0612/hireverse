@@ -140,6 +140,48 @@ export const SKILL_RELATIONS: Record<string, string[]> = {
   'uiux design': ['figma', 'adobe xd', 'wireframing', 'sketch'],
   'adobe xd': ['figma', 'uiux design'],
   'photoshop': ['graphic design', 'adobe illustrator'],
+
+  // ── DevOps / Cloud-native (extended) ──
+  'ci/cd': ['jenkins', 'github actions', 'gitlab ci', 'cicd', 'docker'],
+  'github actions': ['cicd', 'ci/cd', 'devops'],
+  'gitlab ci': ['cicd', 'ci/cd', 'devops', 'gitlab'],
+  'ansible': ['devops', 'terraform', 'linux'],
+  'infrastructure as code': ['terraform', 'ansible', 'cloud'],
+  'helm': ['kubernetes', 'docker'],
+  'prometheus': ['grafana', 'monitoring', 'kubernetes'],
+  'grafana': ['prometheus', 'monitoring'],
+  'monitoring': ['prometheus', 'grafana', 'devops'],
+  'nginx': ['linux', 'devops', 'load balancing'],
+  'cloud': ['aws', 'azure', 'gcp'],
+
+  // ── Messaging / data infra ──
+  'kafka': ['microservices', 'event-driven architecture', 'rabbitmq'],
+  'rabbitmq': ['kafka', 'microservices', 'message queue'],
+  'message queue': ['kafka', 'rabbitmq'],
+  'elasticsearch': ['search', 'logstash', 'kibana', 'nosql'],
+  'microservices': ['docker', 'kubernetes', 'rest api', 'kafka', 'grpc'],
+  'grpc': ['microservices', 'protobuf'],
+  'websockets': ['socketio', 'nodejs', 'real-time'],
+  'socketio': ['websockets', 'nodejs', 'javascript'],
+
+  // ── Frontend tooling ──
+  'webpack': ['javascript', 'frontend build tools', 'babel'],
+  'vite': ['javascript', 'frontend build tools', 'react', 'vue'],
+  'babel': ['javascript', 'webpack'],
+  'storybook': ['react', 'vue', 'uiux design'],
+
+  // ── Backend / data extras ──
+  'firebase': ['nosql', 'mobile development', 'cloud'],
+  'supabase': ['postgresql', 'sql', 'firebase'],
+  'scikit-learn': ['python', 'machine learning', 'pandas'],
+  'data engineering': ['python', 'sql', 'spark', 'airflow'],
+  'spark': ['python', 'data engineering', 'big data'],
+  'airflow': ['python', 'data engineering'],
+
+  // ── Mobile (extended) ──
+  'mobile development': ['android', 'ios', 'react native', 'flutter'],
+  'dart': ['flutter', 'mobile development'],
+  'xcode': ['ios', 'swift'],
 };
 
 // Same normalization as resumeAnalysis's `dropDots` + lowercase — keeps both

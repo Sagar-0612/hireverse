@@ -33,6 +33,7 @@ export const POST: APIRoute = async ({ params }) => {
     testsTotal:  doc.testsTotal  || 0,
     candidateName: candidate?.name || 'The candidate',
     jobTitle: (job as any)?.title || '',
+    questionAsked: doc.questionAsked || '',
   });
 
   doc.codeQualityScore    = result.codeQualityScore;

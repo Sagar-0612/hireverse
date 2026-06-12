@@ -24,3 +24,24 @@ export function isWithinGap(a: TimeWindow, b: TimeWindow, gapMinutes = MIN_GAP_M
   const bEnd = bStart + (Number(b.duration) || 60);
   return aStart < bEnd + gapMinutes && bStart < aEnd + gapMinutes;
 }
+
+// Combine a YYYY-MM-DD date and an optional HH:MM time into a Date.
+// A missing time defaults to the end of that day, so a date-only deadline
+// ("due 2026-06-12") isn't considered overdue until that whole day has passed.
+export function parseDueDateTime(date: string, time?: string): Date | null {
+  if (!date) return null;
+  const timePart = time && /^\d{1,2}:\d{2}$/.test(time) ? time : '23:59';
+  const d = new Date(`${date}T${timePart}:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// True when a scheduled date/time has passed and the activity is still in a
+// non-terminal state (e.g. an interview still "scheduled" or an assessment
+// still "pending"/"submitted") — used to surface "Overdue" badges across
+// interviews and assessments so nothing silently falls through the cracks.
+export function isOverdue(date: string, time: string | undefined, isPending: boolean, now: Date = new Date()): boolean {
+  if (!isPending) return false;
+  const due = parseDueDateTime(date, time);
+  if (!due) return false;
+  return due.getTime() < now.getTime();
+}

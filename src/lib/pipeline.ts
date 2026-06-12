@@ -86,17 +86,6 @@ export function isValidStageTransition(pipeline: PipelineStage[] = [], fromKey: 
   return to.order >= from.order;
 }
 
-// The first stage in a job's pipeline that's actually about interviewing —
-// detected from the stage's own name rather than hardcoded, since pipelines
-// are fully configurable per job. Used as the line in the sand for "has this
-// candidate's interview signal actually been captured yet" checks: moving
-// someone past this point without a real, analyzed interview on file is
-// exactly the kind of stage/data desync that leaves their profile frozen on
-// resume-only signal while the journey says they've cleared the bar.
-export function findInterviewGateStage(pipeline: PipelineStage[] = []): PipelineStage | undefined {
-  return sortedPipeline(pipeline).find(s => /interview/i.test(s.key) || /interview/i.test(s.label));
-}
-
 // Non-interview exclusions: document review, automated tests, terminal stages.
 const INTERVIEW_EXCL_RE = /\bresume[-_\s]?screen\b|\bwritten\b|\bcoding\b|\btake[-_\s]?home\b|\bassessment\b|\btest\b|\boffer\b|\bhired\b/i;
 // Human-meeting patterns: any kind of live session with a person.
@@ -113,6 +102,31 @@ export function isAssessmentStage(stage: { key: string; label: string }): boolea
   return /\bcoding\b|\btest\b|\bassessment\b|\bwritten\b|\btake[-_\s]?home\b/i.test(s);
 }
 
+// The first stage in a job's pipeline that's actually about interviewing —
+// detected with the same classification `isInterviewStage` uses for the
+// "Schedule Interview" action, rather than a bare `/interview/i` substring
+// check. A pipeline stage like "Tech Round 1" or "HR Discussion" is plainly
+// an interview to a recruiter (and `isInterviewStage` agrees), but the old
+// substring check missed it entirely — silently disabling the "have we
+// actually captured interview signal yet" gate for any pipeline that doesn't
+// spell the word "interview" in a stage name/key. Used as the line in the
+// sand for "has this candidate's interview signal actually been captured
+// yet" checks: moving someone past this point without a real, analyzed
+// interview on file is exactly the kind of stage/data desync that leaves
+// their profile frozen on resume-only signal while the journey says they've
+// cleared the bar.
+export function findInterviewGateStage(pipeline: PipelineStage[] = []): PipelineStage | undefined {
+  return sortedPipeline(pipeline).find(s => isInterviewStage(s));
+}
+
+// Same idea as findInterviewGateStage, but for assessment-type stages
+// (coding tests, written assessments, take-home tasks) — the line in the
+// sand for "has this candidate's assessment been submitted and evaluated
+// yet" checks.
+export function findAssessmentGateStage(pipeline: PipelineStage[] = []): PipelineStage | undefined {
+  return sortedPipeline(pipeline).find(s => isAssessmentStage(s));
+}
+
 // Returns true when the candidate still has at least one interview-type stage
 // at or ahead of their current position — used to decide whether "Schedule
 // Interview" should appear at all for a given candidate.
@@ -127,6 +141,61 @@ export function hasUpcomingAssessmentStage(pipeline: PipelineStage[], currentSta
   const sorted = sortedPipeline(pipeline);
   const idx = sorted.findIndex(s => s.key === currentStageKey);
   return sorted.slice(Math.max(0, idx)).some(s => isAssessmentStage(s));
+}
+
+// Per-stage record status, as seen from the candidate's pipeline:
+// - 'none'    — no interview/assessment record exists for this stage yet
+// - 'pending' — a record exists but isn't completed/evaluated yet (in flight)
+// - 'done'    — a completed/evaluated record exists for this stage
+export type StageRecordStatus = 'none' | 'pending' | 'done';
+
+// The single source of truth for "which one action — Schedule Interview or
+// Create Assessment — should this candidate's profile show right now, if
+// any." Earlier logic (hasUpcomingInterviewStage/hasUpcomingAssessmentStage)
+// answered "does an interview/assessment stage exist anywhere from here to
+// the end of the pipeline" — true for both at once whenever a pipeline has
+// both stage types ahead, so both buttons could show simultaneously even
+// though only one stage is actually "next" for the candidate. This instead
+// looks at the candidate's CURRENT stage first: if it's an interview or
+// assessment stage that hasn't been completed yet, that's the one action to
+// offer. Once it's done, the candidate has effectively moved past it, so the
+// next stage in line is checked the same way. A stage that's "pending" (a
+// record exists but isn't completed/evaluated) surfaces neither action —
+// there's nothing to schedule/create until that record is resolved.
+export function getCandidateStageActions(
+  pipeline: PipelineStage[],
+  currentStageKey: string,
+  interviewStatusForStage: (stageKey: string) => StageRecordStatus,
+  assessmentStatusForStage: (stageKey: string) => StageRecordStatus,
+): { canScheduleInterview: boolean; canScheduleAssessment: boolean } {
+  const none = { canScheduleInterview: false, canScheduleAssessment: false };
+  const sorted = sortedPipeline(pipeline);
+  const idx = sorted.findIndex(s => s.key === currentStageKey);
+  if (idx === -1) return none;
+
+  const checkStage = (stage: PipelineStage): { canScheduleInterview: boolean; canScheduleAssessment: boolean } | null => {
+    if (isInterviewStage(stage)) {
+      const status = interviewStatusForStage(stage.key);
+      if (status === 'done') return null;
+      return { canScheduleInterview: status === 'none', canScheduleAssessment: false };
+    }
+    if (isAssessmentStage(stage)) {
+      const status = assessmentStatusForStage(stage.key);
+      if (status === 'done') return null;
+      return { canScheduleInterview: false, canScheduleAssessment: status === 'none' };
+    }
+    return null;
+  };
+
+  const current = checkStage(sorted[idx]);
+  if (current) return current;
+
+  const next = sorted[idx + 1];
+  if (next) {
+    const upcoming = checkStage(next);
+    if (upcoming) return upcoming;
+  }
+  return none;
 }
 
 export function isHiredStage(pipeline: PipelineStage[] = [], stageKey: string): boolean {
