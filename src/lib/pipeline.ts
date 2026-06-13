@@ -89,7 +89,7 @@ export function isValidStageTransition(pipeline: PipelineStage[] = [], fromKey: 
 // Non-interview exclusions: document review, automated tests, terminal stages.
 const INTERVIEW_EXCL_RE = /\bresume[-_\s]?screen\b|\bwritten\b|\bcoding\b|\btake[-_\s]?home\b|\bassessment\b|\btest\b|\boffer\b|\bhired\b/i;
 // Human-meeting patterns: any kind of live session with a person.
-const INTERVIEW_INCL_RE = /\binterview\b|\bpanel\b|\bbehavioral\b|\bbehavioural\b|\bculture\b|\bsystem[-_\s]?design\b|\bphone[-_\s]?screen\b|\bhr\b|\bround\b|\btechnical\b/i;
+const INTERVIEW_INCL_RE = /\binterview\b|\bpanel\b|\bbehavioral\b|\bbehavioural\b|\bculture\b|\bsystem[-_\s]?design\b|\bphone[-_\s]?screen\b|\bhr\b|\bround\b|\btechnical\b|\bscreen\b/i;
 
 export function isInterviewStage(stage: { key: string; label: string }): boolean {
   const s = `${stage.key} ${stage.label}`;

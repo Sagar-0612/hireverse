@@ -8,7 +8,7 @@ import { isOverdue } from "../../lib/scheduling";
 
 await connectDB();
 const rawInterviews = await Interview.find()
-  .populate('candidateId', 'name')
+  .populate('candidateId', 'name rejected')
   .populate('jobId', 'title department pipeline')
   .sort({ date: 1, time: 1 })
   .lean();
@@ -31,6 +31,7 @@ const interviews = rawInterviews.map(iv => {
     recommendation: iv.recommendation,
     candidateName: (iv.candidateId as any)?.name || 'Unknown',
     candidateId: (iv.candidateId as any)?._id?.toString() || '',
+    candidateRejected: !!(iv.candidateId as any)?.rejected,
     jobTitle: job?.title || '',
     stageLabel: stage?.label || '',
     stageColor: stage?.color || '#6b7280',
@@ -109,7 +110,7 @@ const uniqueInterviewers = [...new Set(interviews.map(iv => iv.interviewer).filt
         <a href="/interviews/schedule" class="btn btn-primary btn-sm" style="margin-top:12px;">Schedule One</a>
       </div>
     ) : (
-      <div id="upcoming-list" style="display:flex;flex-direction:column;gap:12px;">
+      <div id="upcoming-list" style="display:flex;flex-direction:column;gap:12px;max-height:600px;overflow-y:auto;padding-right:4px;">
         {scheduled.map(iv => (
           <div class="card shadow-lvl-2 iv-upcoming-card"
             data-name={iv.candidateName.toLowerCase()}
@@ -149,9 +150,9 @@ const uniqueInterviewers = [...new Set(interviews.map(iv => iv.interviewer).filt
       <div class="empty-state card shadow-lvl-2"><div style="font-size:15px;font-weight:500;color:var(--fg);">No completed interviews</div></div>
     ) : (
       <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
-        <div class="table-container">
+        <div class="table-container" style="max-height:600px;overflow-y:auto;">
           <table>
-            <thead>
+            <thead style="position:sticky;top:0;z-index:1;background:var(--card-bg);">
               <tr>
                 <th>Candidate</th><th>Job</th><th>Round</th><th>Interviewer</th><th>Date</th><th>Comm</th><th>Technical</th><th>Confidence</th><th>Recommendation</th><th></th>
               </tr>
@@ -163,7 +164,7 @@ const uniqueInterviewers = [...new Set(interviews.map(iv => iv.interviewer).filt
                   data-job={iv.jobTitle}
                   data-interviewer={iv.interviewer}
                   data-status={iv.status}>
-                  <td style="font-weight:500;color:var(--fg);">{iv.candidateName}</td>
+                  <td style="font-weight:500;color:var(--fg);">{iv.candidateName}{iv.candidateRejected && <span class="badge badge-error" style="font-size:10px;padding:1px 6px;margin-left:6px;">Rejected</span>}</td>
                   <td style="color:var(--fg-body);font-size:13px;">{iv.jobTitle}</td>
                   <td style="color:var(--fg-mute);">{iv.round}</td>
                   <td style="color:var(--fg-mute);">{iv.interviewer}</td>
@@ -171,7 +172,9 @@ const uniqueInterviewers = [...new Set(interviews.map(iv => iv.interviewer).filt
                   <td><span class={`badge ${scoreBadgeClass(iv.commScore)}`}>{iv.commScore}</span></td>
                   <td><span class={`badge ${scoreBadgeClass(iv.techScore)}`}>{iv.techScore}</span></td>
                   <td><span class={`badge ${scoreBadgeClass(iv.confidenceScore)}`}>{iv.confidenceScore}</span></td>
-                  <td style="font-size:12px;color:var(--fg-body);max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{iv.recommendation}</td>
+                  <td style="font-size:12px;max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title={iv.candidateRejected ? 'Candidate has since been rejected — this recommendation reflects this round only.' : ''}>
+                    <span style={iv.candidateRejected ? 'color:var(--fg-mute);font-style:italic;' : 'color:var(--fg-body);'}>{iv.recommendation}</span>
+                  </td>
                   <td><a href={`/interviews/${iv.id}`} class="btn btn-ghost btn-sm">Analysis →</a></td>
                 </tr>
               ))}
@@ -185,9 +188,9 @@ const uniqueInterviewers = [...new Set(interviews.map(iv => iv.interviewer).filt
   <!-- All -->
   <div id="tab-all" class="tab-pane" style="display:none;">
     <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
-      <div class="table-container">
+      <div class="table-container" style="max-height:600px;overflow-y:auto;">
         <table>
-          <thead>
+          <thead style="position:sticky;top:0;z-index:1;background:var(--card-bg);">
             <tr>
               <th>Candidate</th><th>Job</th><th>Round</th><th>Interviewer</th><th>Date &amp; Time</th><th>Format</th><th>Status</th><th></th>
             </tr>

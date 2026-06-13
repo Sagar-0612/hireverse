@@ -5,8 +5,9 @@ import { Job } from "../../db/models/Job";
 import { Candidate } from "../../db/models/Candidate";
 import { Interview } from "../../db/models/Interview";
 import { Types } from "mongoose";
-import { sortedPipeline, bucketForCandidate, getIconSvg } from "../../lib/pipeline";
+import { sortedPipeline, bucketForCandidate, getIconSvg, isHiredStage } from "../../lib/pipeline";
 import { formatExperience } from "../../lib/resumeAnalysis";
+import { recommendationDisplay } from "../../lib/candidateSummary";
 
 const { id } = Astro.params;
 if (!id || !Types.ObjectId.isValid(id)) return Astro.redirect('/jobs');
@@ -27,6 +28,7 @@ const jobCandidates = rawCandidates.map((c, i) => ({
   applied: new Date(c.createdAt).toISOString().split('T')[0],
   stage: pipeline.find(s => s.key === c.currentStage),
   bucket: bucketForCandidate(c, job.pipeline),
+  recDisplay: recommendationDisplay(c.recommendation, !!c.rejected, !c.rejected && isHiredStage(job.pipeline, c.currentStage)),
 }));
 
 const rawInterviews = await Interview.find({ jobId: id })
@@ -185,7 +187,7 @@ const avgExpYears = jobCandidates.length ? jobCandidates.reduce((s, c) => s + c.
       <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
         <div class="table-container" style="max-height:540px;overflow-y:auto;">
           <table>
-            <thead style="position:sticky;top:0;z-index:1;background:var(--surface-card,var(--surface,#fff));"><tr><th>Rank</th><th>Candidate</th><th>Score</th><th>Experience</th><th>Skills Match</th><th>Education</th><th>Stage</th><th>Recommendation</th><th></th></tr></thead>
+            <thead style="position:sticky;top:0;z-index:1;background:var(--card-bg);"><tr><th>Rank</th><th>Candidate</th><th>Score</th><th>Experience</th><th>Skills Match</th><th>Education</th><th>Stage</th><th>Recommendation</th><th></th></tr></thead>
             <tbody>
               {jobCandidates.map(c => (
                 <tr class="jd-cand-row"
@@ -218,7 +220,9 @@ const avgExpYears = jobCandidates.length ? jobCandidates.reduce((s, c) => s + c.
                       <span class="badge" style={`font-size:11px;background:${c.stage?.color || '#6b7280'}22;color:${c.stage?.color || '#6b7280'};border:1px solid ${c.stage?.color || '#6b7280'}55;`}>{c.stage?.label || c.currentStage}</span>
                     )}
                   </td>
-                  <td style="font-size:12px;color:var(--fg-body);">{c.recommendation}</td>
+                  <td style="font-size:12px;" title={c.recDisplay.muted ? `Outcome is final — ${c.rejected ? 'rejected' : 'hired'} candidates aren't re-evaluated against this recommendation` : ''}>
+                    <span style={c.recDisplay.muted ? 'color:var(--fg-mute);font-style:italic;' : 'color:var(--fg-body);'}>{c.recDisplay.text}</span>
+                  </td>
                   <td style="display:flex;gap:6px;">
                     <a href={`/candidates/${c.id}`} class="btn btn-ghost btn-sm">Profile →</a>
                     {!c.rejected && <button class="btn btn-ghost btn-sm" style="color:#ef4444;" data-cand-id={c.id} data-cand-name={c.name} onclick="rejectCandidate(this)">Reject</button>}
@@ -263,7 +267,7 @@ const avgExpYears = jobCandidates.length ? jobCandidates.reduce((s, c) => s + c.
       <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
         <div class="table-container" style="max-height:540px;overflow-y:auto;">
           <table>
-            <thead style="position:sticky;top:0;z-index:1;background:var(--surface-card,var(--surface,#fff));"><tr><th>Candidate</th><th>Round</th><th>Interviewer</th><th>Date</th><th>Status</th><th></th></tr></thead>
+            <thead style="position:sticky;top:0;z-index:1;background:var(--card-bg);"><tr><th>Candidate</th><th>Round</th><th>Interviewer</th><th>Date</th><th>Status</th><th></th></tr></thead>
             <tbody>
               {jobInterviews.map(iv => (
                 <tr class="jd-iv-row"

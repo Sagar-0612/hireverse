@@ -15,6 +15,7 @@ const navItems = [
   { href: "/interviews", label: "Interviews", id: "interviews", icon: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5" width="13" height="12" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M1.5 6.5h13" stroke="currentColor" stroke-width="1.5"/><path d="M5 1v3M11 1v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>` },
   { href: "/assessments", label: "Assessments", id: "assessments", icon: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M5 2h6v2H5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><rect x="3" y="4" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 8l1.5 1.5L9.5 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>` },
   { href: "/analytics", label: "Analytics", id: "analytics", icon: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 12l3.5-4 3 2.5L12 5l2 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>` },
+  { href: "/intelligence", label: "Intelligence", id: "intelligence", icon: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1.5a3.5 3.5 0 0 0-3.5 3.5c0 1.4.7 2.4 1.5 3.2.5.5.8 1 .9 1.8h2.2c.1-.8.4-1.3.9-1.8.8-.8 1.5-1.8 1.5-3.2A3.5 3.5 0 0 0 8 1.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M6.2 12.5h3.6M6.7 14.5h2.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>` },
   { href: "/team", label: "Team", id: "team", icon: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="5.5" cy="5" r="2.5" stroke="currentColor" stroke-width="1.5"/><circle cx="10.5" cy="5" r="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M1 14c0-2.485 2.015-4 4.5-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M9 14c0-2.485 1.015-4 3.5-4s4 1.515 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>` },
   { href: "/settings", label: "Settings", id: "settings", icon: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v1.5M8 13.5V15M15 8h-1.5M2.5 8H1M12.364 3.636l-1.06 1.06M4.696 11.304l-1.06 1.06M12.364 12.364l-1.06-1.06M4.696 4.696l-1.06-1.06" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>` },
   { href: "/faq", label: "Help & FAQ", id: "faq", icon: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5"/><path d="M6 6.2c0-1.2 1-2.2 2-2.2s2 .8 2 2c0 1.6-2 1.6-2 3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.7" r="0.9" fill="currentColor"/></svg>` },
@@ -28,6 +29,18 @@ const navItems = [
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{title} — HireVerse AI</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <!-- Runs synchronously before first paint, on every full page navigation
+       (this is a multi-page app — each sidebar link is a real navigation).
+       Without this, the page always paints with the `class="dark"` default
+       above, then the deferred module script below removes it for
+       light-theme users — a visible dark-to-light flash on every nav. -->
+  <script is:inline>
+    (function() {
+      if (localStorage.getItem("hv-theme") === "light") {
+        document.documentElement.classList.remove("dark");
+      }
+    })();
+  </script>
 </head>
 <body>
   <div class="app-shell">
@@ -145,16 +158,8 @@ const navItems = [
   </div>
 
   <script>
-    // Theme persistence
-    (function() {
-      const saved = localStorage.getItem("hv-theme");
-      if (saved === "light") {
-        document.documentElement.classList.remove("dark");
-      } else {
-        document.documentElement.classList.add("dark");
-      }
-    })();
-
+    // Theme class itself is already set by the inline head script (before
+    // first paint) — this just wires up the toggle button and its icons.
     const toggle = document.getElementById("theme-toggle");
     const iconSun = document.getElementById("icon-sun");
     const iconMoon = document.getElementById("icon-moon");

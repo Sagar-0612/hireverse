@@ -5,7 +5,7 @@ import { Candidate } from "../../db/models/Candidate";
 import { Interview } from "../../db/models/Interview";
 import { Types } from "mongoose";
 import { sortedPipeline, getValidNextStages, findStage, getIconSvg, isHiredStage, getCandidateStageActions, type StageRecordStatus } from "../../lib/pipeline";
-import { buildCandidateSummary } from "../../lib/candidateSummary";
+import { buildCandidateSummary, recommendationDisplay } from "../../lib/candidateSummary";
 import { formatExperience } from "../../lib/resumeAnalysis";
 import { Assessment } from "../../db/models/Assessment";
 
@@ -76,6 +76,7 @@ const summary = buildCandidateSummary({
   pipeline,
   matchedSkills: raw.skills || [],
   practicalSkills: raw.practicalSkills || [],
+  skillGaps: raw.skillGaps || [],
   achievements: raw.achievements || [],
   jobRequiredSkills: job?.requiredSkills || [],
   jobNiceToHaveSkills: job?.niceToHaveSkills || [],
@@ -98,6 +99,7 @@ const summary = buildCandidateSummary({
   })),
 });
 const verdictBadgeClass = (summary.verdict === 'advance' || summary.verdict === 'hired') ? 'badge-success' : summary.verdict === 'rejected' ? 'badge-error' : summary.verdict === 'early' ? 'badge-info' : 'badge-warning';
+const aiRecDisplay = recommendationDisplay(summary.overallLabel, raw.rejected, isHired);
 
 const candidate = {
   ...raw,
@@ -124,21 +126,22 @@ const skillStatus = skillsToShow.map((skill: string) => {
   const gap = skillGapsBySkill.get(skill.toLowerCase());
   if (gap) {
     const niceToHaveSuffix = gap.required ? '' : ' (nice-to-have for this role)';
+    const learnedSuffix = gap.learnedOccurrences ? ` (learned from ${gap.learnedOccurrences} recruiter correction${gap.learnedOccurrences === 1 ? '' : 's'})` : '';
     const labels: Record<string, string> = {
       practical: 'Used in a project or role — not just listed',
       listed: `Listed, but no project/work evidence found${niceToHaveSuffix}`,
-      related: `Not directly listed, but "${gap.relatedSkill}" suggests working knowledge${niceToHaveSuffix}`,
+      related: `Not directly listed, but "${gap.relatedSkill}" suggests working knowledge${niceToHaveSuffix}${learnedSuffix}`,
       missing: `Not found on resume${niceToHaveSuffix}`,
     };
-    return { score: gap.score, label: labels[gap.status] || 'Not found on resume' };
+    return { score: gap.score, label: labels[gap.status] || 'Not found on resume', correctable: gap.status === 'missing' };
   }
   // Legacy fallback for candidates analyzed before skillGaps existed.
   const matched = (candidate.skills || []).some((s: string) => s.toLowerCase() === skill.toLowerCase());
-  if (!matched) return { score: 0, label: 'Not found on resume' };
+  if (!matched) return { score: 0, label: 'Not found on resume', correctable: false };
   const demonstrated = (candidate.practicalSkills || []).some((s: string) => s.toLowerCase() === skill.toLowerCase());
   return demonstrated
-    ? { score: 95, label: 'Used in a project or role — not just listed' }
-    : { score: 55, label: 'Listed, but no project/work evidence found' };
+    ? { score: 95, label: 'Used in a project or role — not just listed', correctable: false }
+    : { score: 55, label: 'Listed, but no project/work evidence found', correctable: false };
 });
 ---
 
@@ -173,7 +176,7 @@ const skillStatus = skillsToShow.map((skill: string) => {
        describe the document itself and don't change), but the number badged
        "AI Score" is the one that should move as the candidate progresses —
        see the narrative sentence below for exactly how it's derived. -->
-  <div class="card shadow-lvl-2" style="display:flex;gap:24px;align-items:center;flex-wrap:wrap;padding:20px 24px;margin-bottom:20px;">
+  <div id="score-banner" class="card shadow-lvl-2" style="display:flex;gap:24px;align-items:center;flex-wrap:wrap;padding:20px 24px;margin-bottom:20px;">
     <div style="text-align:center;">
       <div style="font-size:40px;font-weight:700;color:var(--fg);letter-spacing:-2px;font-family:'JetBrains Mono',monospace;line-height:1;">{summary.overallScore}</div>
       <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;margin-top:4px;">AI Score</div>
@@ -198,11 +201,17 @@ const skillStatus = skillsToShow.map((skill: string) => {
       </div>
     </div>
     <div style="width:1px;height:48px;background:var(--border);flex-shrink:0;"></div>
-    <div>
-      <span class={`badge ${summary.overallLabel === 'Strongly Recommend' ? 'badge-success' : summary.overallLabel === 'Recommend' ? 'badge-info' : summary.overallLabel === 'Consider' ? 'badge-warning' : 'badge-error'}`} style="font-size:13px;padding:4px 12px;">
-        {summary.overallLabel}
-      </span>
-      <div style="font-size:11px;color:var(--fg-mute);margin-top:6px;text-align:center;">AI Recommendation</div>
+    <div style="text-align:center;">
+      {aiRecDisplay.muted ? (
+        <span class="badge" style="font-size:13px;padding:4px 12px;background:var(--bg-soft);color:var(--fg-mute);border:1px solid var(--border);font-style:italic;" title={`Outcome is final — ${raw.rejected ? 'rejected' : 'hired'} candidates aren't re-evaluated against this recommendation`}>
+          {aiRecDisplay.text}
+        </span>
+      ) : (
+        <span class={`badge ${summary.overallLabel === 'Strongly Recommend' ? 'badge-success' : summary.overallLabel === 'Recommend' ? 'badge-info' : summary.overallLabel === 'Consider' ? 'badge-warning' : 'badge-error'}`} style="font-size:13px;padding:4px 12px;">
+          {summary.overallLabel}
+        </span>
+      )}
+      <div style="font-size:11px;color:var(--fg-mute);margin-top:6px;text-align:center;">{aiRecDisplay.muted ? `AI Recommendation (at time of scoring)` : 'AI Recommendation'}</div>
     </div>
   </div>
 
@@ -284,7 +293,12 @@ const skillStatus = skillsToShow.map((skill: string) => {
                   <div class="progress" style="flex:1;"><div class="progress-bar" style={`width:${skillStatus[i].score}%;background:${skillStatus[i].score === 0 ? '#ef4444' : skillStatus[i].score <= 35 ? '#f59e0b' : skillStatus[i].score >= 95 ? '#10b981' : 'var(--accent, #6366f1)'};`}></div></div>
                   <div style="font-size:12px;color:var(--fg-mute);width:32px;text-align:right;font-family:'JetBrains Mono',monospace;">{skillStatus[i].score}%</div>
                 </div>
-                <div style="font-size:11px;color:var(--fg-mute);margin:3px 0 0 122px;">{skillStatus[i].label}</div>
+                <div style="font-size:11px;color:var(--fg-mute);margin:3px 0 0 122px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                  <span>{skillStatus[i].label}</span>
+                  {skillStatus[i].correctable && (
+                    <button class="skill-correct-btn" data-skill={skill} style="font-size:11px;color:var(--accent, #6366f1);background:none;border:none;padding:0;cursor:pointer;text-decoration:underline;">Found evidence on resume?</button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -362,9 +376,11 @@ const skillStatus = skillsToShow.map((skill: string) => {
             {candidate.rejected ? (
               <span class="badge badge-error">Rejected</span>
             ) : (
-              <select id="stage-select" class="select" style="width:140px;height:28px;font-size:12px;" data-current-stage={candidate.currentStage}>
-                {validStages.map(s => (
-                  <option value={s.key} selected={candidate.currentStage === s.key}>{s.label}</option>
+              <select id="stage-select" class="select" style="width:140px;height:28px;font-size:12px;" data-current-stage={candidate.currentStage} data-current-order={currentStage?.order ?? 0}>
+                {validStages.map((s, i) => (
+                  <option value={s.key} data-order={s.order} selected={candidate.currentStage === s.key}>
+                    {s.label}{i === 1 ? ' (Next)' : ''}
+                  </option>
                 ))}
               </select>
             )}
@@ -399,6 +415,37 @@ const skillStatus = skillsToShow.map((skill: string) => {
     const select = e.target;
     const previousStage = select.dataset.currentStage || '';
     const currentStage = select.value;
+
+    // Moving straight to the immediate next stage is the normal flow and
+    // only needs a note. Jumping further ahead skips one or more stages —
+    // each of those stages may have its own interview/assessment that would
+    // never get scheduled, so require an explicit, named confirmation before
+    // even getting to the note prompt. This is the only thing standing
+    // between "anyone can be moved to any stage with one comment" and a
+    // deliberate, auditable skip.
+    const selectedOption = select.options[select.selectedIndex];
+    const targetOrder = Number(selectedOption?.dataset.order ?? 0);
+    const currentOrder = Number(select.dataset.currentOrder ?? 0);
+    const skipped = Array.from(select.options)
+      .filter(o => {
+        const order = Number(o.dataset.order ?? 0);
+        return order > currentOrder && order < targetOrder;
+      })
+      .map(o => o.textContent.replace(' (Next)', '').trim());
+
+    if (skipped.length > 0) {
+      const proceedSkip = await window.hvConfirm({
+        title: 'Skip ahead?',
+        message: `This skips ${skipped.length} stage${skipped.length === 1 ? '' : 's'} the candidate hasn't been through yet: ${skipped.join(', ')}. Any interview or assessment for ${skipped.length === 1 ? 'that stage' : 'those stages'} won't be scheduled. Continue?`,
+        confirmLabel: 'Skip & continue',
+        destructive: true,
+      });
+      if (!proceedSkip) {
+        select.value = previousStage;
+        return;
+      }
+    }
+
     const notes = await window.hvPrompt({
       title: 'Move candidate',
       message: 'Add an optional note about this move (visible on the candidate journey):',
@@ -507,6 +554,44 @@ const skillStatus = skillsToShow.map((skill: string) => {
     const res = await fetch(`/api/candidates/${candidateId}`, { method: 'DELETE' });
     if (res.ok) window.location.href = '/candidates';
     else window.hvToast('Failed to delete.', 'error');
+  });
+
+  document.querySelectorAll('.skill-correct-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const target = e.currentTarget;
+      const skill = target.dataset.skill;
+      const evidencePhrase = await window.hvPrompt({
+        title: `Evidence for "${skill}"`,
+        message: `Quote the exact word or short phrase from this resume that shows real knowledge of "${skill}" (e.g. a tool or technique the static analysis didn't recognize as related). This helps the platform learn — once enough recruiters confirm the same phrase, it's recognized automatically for future resumes too.`,
+        placeholder: 'e.g. container orchestration',
+        confirmLabel: 'Submit correction',
+      });
+      if (!evidencePhrase || !evidencePhrase.trim()) return;
+      target.disabled = true;
+      try {
+        const res = await fetch(`/api/candidates/${candidateId}/skill-correction`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ skill, evidencePhrase: evidencePhrase.trim() }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          window.hvToast(data.error || 'Failed to record correction.', 'error');
+          target.disabled = false;
+          return;
+        }
+        window.hvToast(
+          data.correction?.justPromoted
+            ? `Thanks — this is now recognized platform-wide for "${skill}".`
+            : `Thanks — recorded. Score updated.`,
+          'success'
+        );
+        window.location.reload();
+      } catch {
+        window.hvToast('Failed to record correction.', 'error');
+        target.disabled = false;
+      }
+    });
   });
 
   document.getElementById('reanalyze-btn')?.addEventListener('click', async (e) => {

@@ -51,9 +51,9 @@ const jobs = await Promise.all(rawJobs.map(async j => ({
 
   <!-- Table -->
   <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
-    <div class="table-container">
+    <div class="table-container" style="max-height:600px;overflow-y:auto;">
       <table id="jobs-table">
-        <thead>
+        <thead style="position:sticky;top:0;z-index:1;background:var(--card-bg);">
           <tr>
             <th>Job Title</th>
             <th>Department</th>

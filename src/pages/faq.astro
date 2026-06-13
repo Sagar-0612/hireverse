@@ -43,10 +43,12 @@ const categories: FaqCategory[] = [
       },
       {
         q: "What does the Dashboard show me?",
-        a: `The Dashboard is your home base. It shows headline numbers (open jobs, total candidates, interviews this week, pending assessments), a feed of recent activity across the whole platform, and quick links into jobs that need attention. Use it as your daily "what changed since I last looked" view.`,
+        a: `The Dashboard is your <strong>daily action list</strong> — what needs your attention right now. It shows headline numbers (open jobs, total candidates, interviews this week, pending assessments), a <strong>Needs Attention</strong> card listing every overdue interview and assessment so nothing slips through the cracks, the live <strong>Hiring Funnel</strong> across all jobs, your top jobs by applicant volume, upcoming interviews, and a feed of recent activity. Use it as your daily "what's outstanding and what changed" view.
+        <br/><br/>
+        For trends and performance over time, see <strong>Analytics</strong> instead — the Dashboard intentionally stays focused on today's open items rather than historical charts.`,
         video: {
           slug: "dashboard-activity",
-          description: "Reading the Dashboard stat cards and recent activity feed, then navigating to Candidates to find the record an activity entry refers to.",
+          description: "Reading the Dashboard stat cards, the Needs Attention card, and recent activity feed, then navigating to Candidates to find the record an activity entry refers to.",
         },
       },
       {
@@ -110,6 +112,16 @@ const categories: FaqCategory[] = [
       {
         q: "Why can't I see a stage-change dropdown in the Jobs → Candidates table anymore?",
         a: `That table now shows the candidate's <strong>current stage as a read-only badge</strong>. To change a candidate's stage, open their profile and use the dedicated <strong>Move to Stage</strong> action — this ensures every stage change is properly logged in the candidate's history and triggers any related scheduling logic (e.g. creating an assessment when moving into an assessment stage).`,
+      },
+      {
+        q: "I filtered to Rejected candidates, but some still show 'Strongly Recommend' or 'Recommend' — is that a mistake?",
+        a: `No — that's expected, and it's deliberately shown differently so it can't be mistaken for a live call to action. A recommendation badge (whether on the candidate list, an interview, or an assessment) reflects the <strong>AI's read of the resume/interview/assessment at the time it was analyzed</strong> — it's a historical record, not a current suggestion.
+        <br/><br/>
+        Once a candidate is <strong>rejected</strong> (or <strong>hired</strong>), any recommendation badge for them is shown <strong>muted/italic</strong> with a tooltip explaining it reflects that round only and the candidate's status has since changed. The decision to reject (or hire) always overrides whatever the recommendation said — the badge is just kept visible for audit/context, e.g. "this candidate scored well on paper but was rejected after the interview, here's why."`,
+        video: {
+          slug: "rejected-candidate-context",
+          description: "Filtering the Candidates list to Rejected, opening a rejected candidate whose recommendation still reads 'Strongly Recommend', and seeing the muted/historical styling and tooltip.",
+        },
       },
     ],
   },
@@ -210,12 +222,50 @@ const categories: FaqCategory[] = [
     icon: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 12l3.5-4 3 2.5L12 5l2 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     items: [
       {
-        q: "What can I see in Analytics?",
-        a: `Analytics aggregates data across all jobs: pipeline funnel/conversion between stages, time-to-hire trends, candidate volume by source/job, and assessment/interview outcomes. Use it to spot bottlenecks — e.g. a stage where candidates consistently stall, or a job that's taking unusually long to fill.`,
+        q: "What can I see in Analytics, and how is it different from the Dashboard?",
+        a: `Where the Dashboard answers "what needs my attention today", Analytics answers "how is hiring performing over time" — they're deliberately built to show different things, not the same numbers twice. Analytics has:
+        <ul>
+          <li><strong>Conversion by Job</strong> — of everyone who applied to each role, what share is currently hired (a performance read on that pipeline)</li>
+          <li><strong>Monthly Trends</strong> — applications vs. hires over the last 6 months</li>
+          <li><strong>Top Jobs by Applications</strong> — your highest-volume roles</li>
+          <li><strong>Score Calibration</strong> — whether the AI resume-scoring rubric actually predicts who advances, with a link to the full per-job breakdown on Platform Intelligence</li>
+        </ul>
+        Use Analytics for reviews and reporting; use the Dashboard for day-to-day triage.`,
+        video: {
+          slug: "analytics-tour",
+          description: "Scrolling through the Analytics page — Conversion by Job, Monthly Trends, Top Jobs, and Score Calibration.",
+        },
       },
       {
         q: "What is the Activity Log and where do I find it?",
         a: `Every meaningful action — a candidate moving stages, an interview being scheduled/completed/rescheduled, an assessment being created/evaluated/rescheduled — is recorded as an <strong>activity entry</strong> with a human-readable message, timestamp, and links back to the relevant job/candidate. The most recent entries surface on the Dashboard; the full history is attached to each candidate's profile.`,
+      },
+    ],
+  },
+  {
+    id: "intelligence",
+    label: "Platform Intelligence",
+    icon: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 1.5a3.5 3.5 0 0 0-3.5 3.5c0 1.4.7 2.4 1.5 3.2.5.5.8 1 .9 1.8h2.2c.1-.8.4-1.3.9-1.8.8-.8 1.5-1.8 1.5-3.2A3.5 3.5 0 0 0 8 1.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M6.2 12.5h3.6M6.7 14.5h2.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
+    items: [
+      {
+        q: "What is the Platform Intelligence page?",
+        a: `<strong>Platform Intelligence</strong> (in the sidebar) is where HireVerse shows its own adaptive layer: every skill-evidence correction it has learned, and whether its resume-scoring rubric actually predicts real pipeline outcomes for each job. It's entirely <strong>read-only</strong> — nothing on this page changes how any individual candidate was or will be scored. Think of it as "how the platform is getting smarter, and proof that it is."`,
+        video: {
+          slug: "intelligence-tour",
+          description: "Scrolling through Platform Intelligence — the automatic vs. manual learning stats, learned skill aliases, and the score calibration table.",
+        },
+      },
+      {
+        q: "Does the platform need a recruiter to manually 'teach' it for it to learn, or does it learn on its own?",
+        a: `It learns <strong>automatically by default</strong>. Every time an interview is marked Completed and analyzed, HireVerse scans the interviewer's own feedback (and transcript, if provided) for evidence of any skill the candidate's resume had marked "missing" — if the interviewer mentions it, that skill gap is automatically upgraded and the candidate's score/recommendation is recomputed on the spot. This is recorded as a correction from <strong>"System (interview feedback)"</strong> on the Platform Intelligence page.
+        <br/><br/>
+        Recruiters can <em>additionally</em> record evidence manually from a candidate's "Skills" tab using "Found evidence on resume?" — useful if you spot something outside of an interview (e.g. in a portfolio or reference call). Both paths feed the same learning system: once the same (skill, phrase) combination has been confirmed <strong>twice</strong> — automatically or manually, in any combination — it becomes a permanently "Active" alias applied to every future resume that requires that skill, for any job.`,
+      },
+      {
+        q: "What does 'Score Calibration' mean, and could it ever lower a candidate's score?",
+        a: `Score Calibration groups every recorded pipeline outcome (advanced / rejected / hired) by the candidate's resume score band at the time, per job — so you can see, e.g., "candidates scoring 75-87 for this role advance 80% of the time, but candidates scoring 65-74 almost never do." It's purely descriptive context for recruiters deciding whether a job's score thresholds feel right.
+        <br/><br/>
+        It <strong>never</strong> changes any candidate's score automatically — by design, every candidate is scored the same explicit way at analysis time, so scoring stays fair and auditable. The Analytics page shows a condensed "overall advance rate" headline version of this same data; Platform Intelligence has the full per-job, per-band breakdown.`,
       },
     ],
   },

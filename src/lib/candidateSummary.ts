@@ -75,6 +75,13 @@ export interface CandidateSummaryInput {
   // excluded) — folding live recruiter input into the read is what makes it
   // "dynamic per stage" rather than frozen at the resume.
   latestStageNote: LatestStageNote | null;
+  // Per-skill scoring detail (see resumeAnalysis.ts / Candidate.skillGaps) —
+  // the score's source of truth, including related-skill and learned-alias
+  // credit for skills that aren't literally named on the resume. Used so the
+  // JD-fit narrative doesn't contradict the skill-gap table shown lower on
+  // the same page (e.g. calling a learned-alias-credited skill "not evident
+  // anywhere" while the table credits it at 35%).
+  skillGaps?: { skill: string; status: string }[];
 }
 
 export interface CandidateSummary {
@@ -132,6 +139,24 @@ export function blendOverallScore(resumeScore: number, interviews: OverallScoreI
   return { overallScore, overallLabel: getRecommendation(overallScore), roundsConsidered: analyzed.length };
 }
 
+export interface RecommendationDisplay {
+  text: string;
+  muted: boolean;
+}
+
+// A candidate's resume/blended recommendation ("Strongly Recommend",
+// "Recommend", etc.) is a read of FIT — it doesn't change once a recruiter
+// records a terminal outcome (Rejected or Hired) for that candidate. Showing
+// "Strongly Recommend" next to a red "Rejected" badge with no context reads
+// as a contradiction to anyone unfamiliar with the platform. Once a terminal
+// outcome exists, the recommendation becomes historical "this is what the
+// system thought at the time" context rather than a live call to action —
+// this reframes it as such everywhere it's shown alongside a status badge.
+export function recommendationDisplay(recommendation: string, rejected: boolean, hired: boolean): RecommendationDisplay {
+  if (rejected || hired) return { text: `Resume read: ${recommendation}`, muted: true };
+  return { text: recommendation, muted: false };
+}
+
 function dedupe(items: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -163,9 +188,22 @@ export interface JdAlignment {
 function buildJdAlignment(input: CandidateSummaryInput): JdAlignment {
   const matchedLower = new Set(input.matchedSkills.map(s => s.toLowerCase()));
   const practicalLower = new Set(input.practicalSkills.map(s => s.toLowerCase()));
-  const matchedRequired = input.jobRequiredSkills.filter(s => matchedLower.has(s.toLowerCase()));
-  const missingRequired = input.jobRequiredSkills.filter(s => !matchedLower.has(s.toLowerCase()));
-  const matchedNice = input.jobNiceToHaveSkills.filter(s => matchedLower.has(s.toLowerCase()));
+  const gapsBySkill = new Map((input.skillGaps || []).map(g => [g.skill.toLowerCase(), g]));
+
+  // A skill counts as "matched" if it's literally on the resume, OR if its
+  // skillGap credits it via related-skill evidence (including promoted
+  // learned aliases) — staying in sync with the skill-gap table shown lower
+  // on the same page, which is the score's actual source of truth.
+  const isMatched = (skill: string) => {
+    const lower = skill.toLowerCase();
+    if (matchedLower.has(lower)) return true;
+    const gap = gapsBySkill.get(lower);
+    return !!gap && gap.status !== 'missing';
+  };
+
+  const matchedRequired = input.jobRequiredSkills.filter(isMatched);
+  const missingRequired = input.jobRequiredSkills.filter(s => !isMatched(s));
+  const matchedNice = input.jobNiceToHaveSkills.filter(isMatched);
   const practical = input.matchedSkills.filter(s => practicalLower.has(s.toLowerCase()));
   const listedOnly = input.matchedSkills.filter(s => !practicalLower.has(s.toLowerCase()));
   return { matchedRequired, missingRequired, matchedNice, practical, listedOnly };

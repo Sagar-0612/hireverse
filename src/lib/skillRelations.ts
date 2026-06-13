@@ -193,7 +193,7 @@ const normSkill = (s: string) => s.toLowerCase().replace(/\./g, '').trim();
 // e.g. "REST API" vs "REST APIs") so a related skill name only counts when it
 // appears as its own token, not as a substring of something else (e.g. "java"
 // shouldn't match inside "javascript").
-function appearsInText(lowerText: string, term: string): boolean {
+export function appearsInText(lowerText: string, term: string): boolean {
   const t = normSkill(term);
   if (!t) return false;
   const base = t.length >= 5 && t.endsWith('s') ? t.slice(0, -1) : t;
@@ -217,6 +217,34 @@ export function findRelatedEvidence(lowerText: string, skill: string): string | 
   for (const candidate of related) {
     if (appearsInText(lowerText, candidate)) {
       return candidate;
+    }
+  }
+  return null;
+}
+
+// A skill alias the platform has LEARNED from recruiter corrections (see
+// src/lib/learningEngine.ts / SkillIntelligence) — same shape and lookup
+// pattern as findRelatedEvidence, but sourced from `learnedAliases` (loaded
+// from the database by the caller) instead of the static SKILL_RELATIONS
+// lexicon above. Returns the matching alias entry (with its occurrence
+// count) so callers can label the match as "(learned from N corrections)".
+export interface LearnedAlias {
+  term: string;
+  occurrences: number;
+}
+
+export function findLearnedEvidence(
+  lowerText: string,
+  skill: string,
+  learnedAliases?: Record<string, LearnedAlias[]>
+): LearnedAlias | null {
+  if (!learnedAliases) return null;
+  const key = normSkill(skill);
+  const aliases = learnedAliases[key] || learnedAliases[key.replace(/s$/, '')];
+  if (!aliases) return null;
+  for (const alias of aliases) {
+    if (appearsInText(lowerText, alias.term)) {
+      return alias;
     }
   }
   return null;

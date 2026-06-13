@@ -1,0 +1,150 @@
+---
+import AppLayout from "../../layouts/AppLayout.astro";
+import { connectDB } from "../../db/connection";
+import { LearningSignal } from "../../db/models/LearningSignal";
+import { SkillIntelligence } from "../../db/models/SkillIntelligence";
+import { Job } from "../../db/models/Job";
+import { summarizeOutcomeSignals, LEARNED_ALIAS_THRESHOLD } from "../../lib/learningEngine";
+
+await connectDB();
+
+// ── Skill alias learning (ai-architecture-recommendation.txt section 10,
+// option 1) — every recruiter correction that's been recorded, grouped by
+// the skill it applies to. Aliases that have crossed LEARNED_ALIAS_THRESHOLD
+// are already being applied to every future resume that requires that skill.
+const skillDocs = await SkillIntelligence.find().sort({ updatedAt: -1 }).lean();
+const skillRows = skillDocs.flatMap(doc =>
+  (doc.aliases || []).map((a: any) => ({
+    skill: doc.skill,
+    term: a.term,
+    occurrences: a.occurrences,
+    promoted: a.promoted,
+    lastSeenAt: a.lastSeenAt,
+  }))
+).sort((a, b) => new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime());
+
+const promotedCount = skillRows.filter(r => r.promoted).length;
+const learningCount = skillRows.length - promotedCount;
+
+// ── Outcome calibration (option 2) — score band vs real pipeline outcome,
+// per job. Purely descriptive: recruiters decide whether a band with a low
+// advance-rate means the score thresholds for that role should be revisited.
+const outcomeSignals = await LearningSignal.find({ type: 'stage-outcome' }, 'jobId score outcome').lean();
+const jobIds = [...new Set(outcomeSignals.map(s => s.jobId))];
+const jobs = jobIds.length ? await Job.find({ _id: { $in: jobIds } }, 'title').lean() : [];
+const jobTitles: Record<string, string> = {};
+for (const j of jobs) jobTitles[j._id.toString()] = j.title;
+
+const calibration = summarizeOutcomeSignals(
+  outcomeSignals.map(s => ({ jobId: s.jobId, score: s.score, outcome: s.outcome })),
+  jobTitles
+);
+
+const totalCorrections = await LearningSignal.countDocuments({ type: 'skill-alias-correction' });
+const automaticCorrections = await LearningSignal.countDocuments({ type: 'skill-alias-correction', actor: { $regex: '^System' } });
+const manualCorrections = totalCorrections - automaticCorrections;
+const totalOutcomes = outcomeSignals.length;
+---
+
+<AppLayout title="Platform Intelligence" activeNav="intelligence">
+  <div style="margin-bottom:28px;">
+    <h1 style="font-size:24px;font-weight:600;color:var(--fg);letter-spacing:-0.5px;margin:0 0 4px;">Platform Intelligence</h1>
+    <p style="font-size:14px;color:var(--fg-mute);margin:0;max-width:720px;">
+      Every correction and pipeline outcome the platform has recorded so far — the
+      adaptive layer that makes HireVerse's analysis a little sharper with each candidate,
+      without ever changing how an individual candidate is scored after the fact. Most of
+      this learning now happens <strong>automatically</strong>: every time an interview is
+      analyzed, the interviewer's own feedback is scanned for evidence of skills a resume
+      missed — no recruiter action required. Recruiters can still add evidence manually
+      from any candidate's "Skills" tab.
+    </p>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:28px;">
+    <div class="stat-card shadow-lvl-2">
+      <div class="stat-label">Skill Corrections Recorded</div>
+      <div class="stat-value">{totalCorrections}</div>
+    </div>
+    <div class="stat-card shadow-lvl-2">
+      <div class="stat-label">— from Interview Feedback (auto)</div>
+      <div class="stat-value">{automaticCorrections}</div>
+    </div>
+    <div class="stat-card shadow-lvl-2">
+      <div class="stat-label">— from Recruiters (manual)</div>
+      <div class="stat-value">{manualCorrections}</div>
+    </div>
+    <div class="stat-card shadow-lvl-2">
+      <div class="stat-label">Aliases Learned (active)</div>
+      <div class="stat-value">{promotedCount}</div>
+    </div>
+    <div class="stat-card shadow-lvl-2">
+      <div class="stat-label">Aliases Pending (1 of {LEARNED_ALIAS_THRESHOLD})</div>
+      <div class="stat-value">{learningCount}</div>
+    </div>
+    <div class="stat-card shadow-lvl-2">
+      <div class="stat-label">Outcome Signals Recorded</div>
+      <div class="stat-value">{totalOutcomes}</div>
+    </div>
+  </div>
+
+  <div class="card shadow-lvl-2" style="margin-bottom:20px;">
+    <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0 0 6px;">Learned Skill Aliases</h2>
+    <p style="font-size:12px;color:var(--fg-mute);margin:0 0 16px;">
+      Whenever real evidence shows up — either automatically, from an interviewer's
+      feedback on a skill the resume marked missing, or manually, from a recruiter
+      pointing at resume text — it's recorded here. Once the same phrase is confirmed by
+      {LEARNED_ALIAS_THRESHOLD} independent corrections it's <strong>Active</strong> — applied
+      automatically to every future resume that requires that skill, on any job.
+    </p>
+    {skillRows.length === 0 ? (
+      <div class="empty-state" style="padding:24px 0;">
+        No corrections recorded yet — they'll appear automatically as interviews are completed and analyzed, or when recruiters use "Found evidence on resume?" on candidate pages.
+      </div>
+    ) : (
+      <div style="display:flex;flex-direction:column;gap:8px;max-height:360px;overflow-y:auto;">
+        {skillRows.map(row => (
+          <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--bg-soft);border-radius:6px;border:1px solid var(--border);">
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;font-weight:500;color:var(--fg);text-transform:capitalize;">{row.skill}</div>
+              <div style="font-size:11px;color:var(--fg-mute);margin-top:2px;">evidence phrase: "{row.term}"</div>
+            </div>
+            <div style="font-size:12px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;">{row.occurrences}/{LEARNED_ALIAS_THRESHOLD} confirmations</div>
+            <span class={`badge ${row.promoted ? 'badge-success' : 'badge-neutral'}`} style="font-size:10px;flex-shrink:0;">{row.promoted ? 'Active' : 'Learning'}</span>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+
+  <div class="card shadow-lvl-2">
+    <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0 0 6px;">Score Calibration by Job</h2>
+    <p style="font-size:12px;color:var(--fg-mute);margin:0 0 16px;">
+      How candidates in each resume-score band actually moved through the pipeline.
+      This is read-only context for recruiters — it never changes how any candidate is
+      scored, by design (fairness first).
+    </p>
+    {calibration.length === 0 ? (
+      <div class="empty-state" style="padding:24px 0;">
+        No pipeline outcomes recorded yet — they'll appear here as candidates are advanced, hired, or rejected.
+      </div>
+    ) : (
+      <div style="display:flex;flex-direction:column;gap:20px;">
+        {calibration.map(insight => (
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--fg);margin-bottom:8px;">{insight.jobTitle} <span style="color:var(--fg-mute);font-weight:400;">({insight.totalSignals} signal{insight.totalSignals === 1 ? '' : 's'})</span></div>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              {insight.bands.filter(b => b.total > 0).map(band => (
+                <div style="display:flex;align-items:center;gap:12px;">
+                  <div style="width:170px;font-size:12px;color:var(--fg-body);flex-shrink:0;">{band.label}</div>
+                  <div class="progress" style="flex:1;"><div class="progress-bar" style={`width:${band.advanceRate}%;background:${band.advanceRate >= 60 ? '#10b981' : band.advanceRate >= 30 ? '#f59e0b' : '#ef4444'};`}></div></div>
+                  <div style="font-size:12px;color:var(--fg-mute);width:50px;text-align:right;font-family:'JetBrains Mono',monospace;">{band.advanceRate}%</div>
+                  <div style="font-size:11px;color:var(--fg-mute);width:130px;text-align:right;">{band.total} total · {band.advanced + band.hired} advanced/hired · {band.rejected} rejected</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+</AppLayout>

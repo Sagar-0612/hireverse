@@ -2,7 +2,7 @@
 // requirements. Replaces random/placeholder scoring with deterministic,
 // inspectable analysis so candidates are judged on what their resume actually says.
 
-import { findRelatedEvidence } from './skillRelations.ts';
+import { findRelatedEvidence, findLearnedEvidence, type LearnedAlias } from './skillRelations.ts';
 
 interface JobLike {
   requiredSkills?: string[];
@@ -53,6 +53,11 @@ export interface SkillGap {
   // candidate page and interview guide from overstating a missing
   // nice-to-have as something "required for this role".
   required: boolean;
+  // Set when `relatedSkill` came from a platform-learned alias (see
+  // src/lib/learningEngine.ts) rather than the static skillRelations
+  // lexicon — the number of independent recruiter corrections that
+  // confirmed this alias.
+  learnedOccurrences?: number;
 }
 
 function isLikelyText(s: string): boolean {
@@ -407,8 +412,21 @@ function extractExperience(text: string): number {
     // dates (e.g. "B.tech (...)\nAmbedkar Nagar, UP\n2018 - 2022") — a
     // narrower window clips the leading "B.tech" mid-word, the education
     // exclusion below silently misses it, and a degree gets counted as work.
-    const windowStart = Math.max(0, m.index - 110);
+    let windowStart = Math.max(0, m.index - 110);
     const windowEnd = Math.min(text.length, m.index + m[0].length + 30);
+    // ...but a 110-char lookback can cross a paragraph/section break, e.g. a
+    // PROFILE blurb mentioning "...without a formal degree." immediately
+    // followed by a blank line and an EXPERIENCE section's first date range —
+    // EDU_NEARBY_RE then matches "degree" from the unrelated prior section and
+    // an entire work range silently gets excluded as "education". Clamp the
+    // window to start after the nearest preceding blank line, so only text in
+    // the SAME section/paragraph as the date range is considered.
+    const before = text.slice(windowStart, m.index);
+    const blankLines = [...before.matchAll(/\n[ \t]*\r?\n/g)];
+    if (blankLines.length) {
+      const last = blankLines[blankLines.length - 1];
+      windowStart += last.index! + last[0].length;
+    }
     if (EDU_NEARBY_RE.test(text.slice(windowStart, windowEnd))) continue;
 
     const startYear = parseInt(m[3], 10);
@@ -643,14 +661,33 @@ function scoreExperience(years: number, level: string): number {
 // credit between "missing" and "listed only".
 const PRACTICAL_SCORE = 100;
 const LISTED_ONLY_SCORE = 65;
-const RELATED_SKILL_SCORE = 35;
+export const RELATED_SKILL_SCORE = 35;
 const MISSING_SCORE = 0;
+
+// Same 0/35/65/100 scale, exposed so the skill-correction API
+// (src/pages/api/candidates/[id]/skill-correction.ts) can re-score a single
+// skill exactly the way analysis would, without duplicating the constants.
+export const SKILL_STATUS_SCORES: Record<SkillGapStatus, number> = {
+  practical: PRACTICAL_SCORE,
+  listed: LISTED_ONLY_SCORE,
+  related: RELATED_SKILL_SCORE,
+  missing: MISSING_SCORE,
+};
 
 // Classifies every required/nice-to-have skill into one of four tiers based
 // on what the resume's own text actually supports — this is the single source
 // of truth for both the aggregate skillsMatch percentage and the per-skill
 // gap list shown on the candidate page and fed into the interview guide.
-function buildSkillGaps(lowerText: string, skills: string[], matched: string[], practical: Set<string>, required: boolean): SkillGap[] {
+//
+// `learnedAliases` (optional, additive — see src/lib/learningEngine.ts) is a
+// map of skill -> phrases that past recruiter corrections have confirmed are
+// real evidence of that skill. When a required skill would otherwise be
+// "missing" and one of its learned aliases appears on this resume, it's
+// upgraded to "related" exactly like a static skillRelations match — the
+// gap carries `learnedOccurrences` so the UI can label it as learned. Omitting
+// `learnedAliases` (or passing {}) reproduces the exact pre-existing
+// behavior.
+function buildSkillGaps(lowerText: string, skills: string[], matched: string[], practical: Set<string>, required: boolean, learnedAliases?: Record<string, LearnedAlias[]>): SkillGap[] {
   const matchedLower = new Set(matched.map(m => m.toLowerCase()));
   return skills.map(skill => {
     const key = skill.toLowerCase();
@@ -662,6 +699,10 @@ function buildSkillGaps(lowerText: string, skills: string[], matched: string[], 
     const related = findRelatedEvidence(lowerText, skill);
     if (related) {
       return { skill, status: 'related', relatedSkill: related, score: RELATED_SKILL_SCORE, required };
+    }
+    const learned = findLearnedEvidence(lowerText, skill, learnedAliases);
+    if (learned) {
+      return { skill, status: 'related', relatedSkill: learned.term, score: RELATED_SKILL_SCORE, required, learnedOccurrences: learned.occurrences };
     }
     return { skill, status: 'missing', score: MISSING_SCORE, required };
   });
@@ -680,7 +721,38 @@ export function getRecommendation(score: number): string {
   return 'Not Recommended';
 }
 
-export function analyzeResume(text: string, filename: string, job: JobLike): ResumeAnalysis {
+// The single source of truth for turning a skillGaps list (plus education/
+// experience scores) into the final skillsMatch/score/recommendation triple.
+// Extracted so the skill-correction API (src/pages/api/candidates/[id]/skill-correction.ts)
+// can recompute a candidate's score after a recruiter corrects one skill's
+// status, using the EXACT same formula as the original analysis — no drift
+// between the two code paths.
+export function recomputeFromSkillGaps(skillGaps: SkillGap[], educationMatch: number, experience: number, job: JobLike): { skillsMatch: number; score: number; recommendation: string } {
+  const requiredGaps = skillGaps.filter(g => g.required);
+  const niceGaps = skillGaps.filter(g => !g.required);
+
+  let skillsMatch = 0;
+  const requiredScore = weightedSkillScore(requiredGaps);
+  const niceScore = weightedSkillScore(niceGaps);
+  if (requiredScore !== null && niceScore !== null) skillsMatch = Math.round(requiredScore * 0.7 + niceScore * 0.3);
+  else if (requiredScore !== null) skillsMatch = requiredScore;
+  else if (niceScore !== null) skillsMatch = niceScore;
+
+  const experienceMatch = scoreExperience(experience, job.level || '');
+  let score = Math.round(skillsMatch * 0.4 + educationMatch * 0.2 + experienceMatch * 0.4);
+
+  // Domain-mismatch hard floor: when a role defines 3+ required skills but the
+  // candidate matches fewer than 20% of them, education and experience alone
+  // cannot compensate — a non-tech candidate for a tech role should never
+  // score above "Not Recommended" just because their years on paper look right.
+  if (requiredGaps.length >= 3 && skillsMatch < 20) {
+    score = Math.min(score, 48);
+  }
+
+  return { skillsMatch, score, recommendation: getRecommendation(score) };
+}
+
+export function analyzeResume(text: string, filename: string, job: JobLike, learnedAliases?: Record<string, LearnedAlias[]>): ResumeAnalysis {
   // Markdown-formatted resumes wrap labels/headings in "**bold**", "# headers"
   // and "- bullets" - strip that markup up front so every downstream regex
   // (name, location, phone, etc.) sees the same plain-text shape it expects
@@ -711,28 +783,12 @@ export function analyzeResume(text: string, filename: string, job: JobLike): Res
   const practicalSet = new Set(practicalSkills.map(s => s.toLowerCase()));
   const achievements = extractAchievements(cleaned);
 
-  const requiredGaps = buildSkillGaps(lowerCleaned, requiredSkills, matchedRequired, practicalSet, true);
-  const niceGaps = buildSkillGaps(lowerCleaned, niceToHaveSkills, matchedNice, practicalSet, false);
+  const requiredGaps = buildSkillGaps(lowerCleaned, requiredSkills, matchedRequired, practicalSet, true, learnedAliases);
+  const niceGaps = buildSkillGaps(lowerCleaned, niceToHaveSkills, matchedNice, practicalSet, false, learnedAliases);
   const skillGaps = [...requiredGaps, ...niceGaps];
 
-  let skillsMatch = 0;
-  const requiredScore = weightedSkillScore(requiredGaps);
-  const niceScore = weightedSkillScore(niceGaps);
-  if (requiredScore !== null && niceScore !== null) skillsMatch = Math.round(requiredScore * 0.7 + niceScore * 0.3);
-  else if (requiredScore !== null) skillsMatch = requiredScore;
-  else if (niceScore !== null) skillsMatch = niceScore;
-
   const educationMatch = scoreEducation(cleaned, job.education || '');
-  const experienceMatch = scoreExperience(experience, job.level || '');
-  let score = Math.round(skillsMatch * 0.4 + educationMatch * 0.2 + experienceMatch * 0.4);
-
-  // Domain-mismatch hard floor: when a role defines 3+ required skills but the
-  // candidate matches fewer than 20% of them, education and experience alone
-  // cannot compensate — a non-tech candidate for a tech role should never
-  // score above "Not Recommended" just because their years on paper look right.
-  if (requiredSkills.length >= 3 && skillsMatch < 20) {
-    score = Math.min(score, 48);
-  }
+  const { skillsMatch, score, recommendation } = recomputeFromSkillGaps(skillGaps, educationMatch, experience, job);
 
   return {
     name,
@@ -747,7 +803,7 @@ export function analyzeResume(text: string, filename: string, job: JobLike): Res
     skillsMatch,
     educationMatch,
     score,
-    recommendation: getRecommendation(score),
+    recommendation,
     skillGaps,
   };
 }

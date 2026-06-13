@@ -55,9 +55,9 @@ const members = rawMembers.map(m => ({
     return (
       <div id={`tab-${tab}`} class="tab-pane" style={ti > 0 ? 'display:none;' : ''}>
         <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
-          <div class="table-container">
+          <div class="table-container" style="max-height:600px;overflow-y:auto;">
             <table>
-              <thead>
+              <thead style="position:sticky;top:0;z-index:1;background:var(--card-bg);">
                 <tr>
                   <th>Member</th><th>Role</th><th>Department</th><th>Interviews This Month</th><th>Status</th><th>Actions</th>
                 </tr>

@@ -243,7 +243,11 @@ if (!isCompleted) {
           <div class="card shadow-lvl-2">
             <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Final Recommendation</h3>
             <div style="font-size:18px;font-weight:600;color:var(--fg);margin-bottom:8px;">{interview.recommendation || 'Not set'}</div>
-            <span class={`badge ${interview.recommendation?.includes('Strong') ? 'badge-success' : interview.recommendation === 'Do Not Recommend' ? 'badge-error' : 'badge-neutral'}`} style="font-size:12px;padding:4px 12px;">{interview.recommendation || '—'}</span>
+            {interview.candidateRejected ? (
+              <span class="badge" style="font-size:12px;padding:4px 12px;background:var(--bg-soft);color:var(--fg-mute);border:1px solid var(--border);font-style:italic;" title={`${interview.candidateName} has since been rejected — this recommendation reflects this round only and is no longer a live call to action.`}>{interview.recommendation || '—'} (candidate since rejected)</span>
+            ) : (
+              <span class={`badge ${interview.recommendation?.includes('Strong') ? 'badge-success' : interview.recommendation === 'Do Not Recommend' ? 'badge-error' : 'badge-neutral'}`} style="font-size:12px;padding:4px 12px;">{interview.recommendation || '—'}</span>
+            )}
           </div>
           <div class="card shadow-lvl-2">
             <h3 style="font-size:13px;font-weight:600;color:var(--fg-mute);margin:0 0 14px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.04em;">Suggested Next Step</h3>

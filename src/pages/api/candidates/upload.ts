@@ -6,6 +6,7 @@ import { Types } from 'mongoose';
 import { extractResumeText, analyzeResume, jdFingerprint, hasMeaningfulProfileChange } from '../../../lib/resumeAnalysis';
 import { sortedPipeline } from '../../../lib/pipeline';
 import { logActivity } from '../../../lib/activity';
+import { getLearnedAliases } from '../../../lib/learningEngine';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
@@ -34,6 +35,11 @@ export const POST: APIRoute = async ({ request }) => {
     // judged against the exact same "has the ask actually changed?" baseline.
     const currentJdHash = jdFingerprint(job);
 
+    // Platform-learned skill aliases (ai-architecture-recommendation.txt
+    // section 10) — loaded once per batch, applied to every resume in it.
+    // Returns {} on a fresh install, reproducing pre-existing behavior exactly.
+    const learnedAliases = await getLearnedAliases();
+
     const existing = await Candidate.find({ jobId }).lean();
     const byEmail = new Map(existing.filter(c => c.email).map(c => [c.email.toLowerCase(), c]));
     const byResumeName = new Map(existing.filter(c => !c.email && c.resumeName).map(c => [c.resumeName, c]));
@@ -56,7 +62,7 @@ export const POST: APIRoute = async ({ request }) => {
         niceToHaveSkills: job.niceToHaveSkills,
         education: job.education,
         level: job.level,
-      });
+      }, learnedAliases);
 
       // A resume matches a candidate already on this job by parsed email, or —
       // when no email could be parsed — by an exact resume-filename match.

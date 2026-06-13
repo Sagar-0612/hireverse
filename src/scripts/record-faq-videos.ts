@@ -313,6 +313,68 @@ async function recordRescheduleAssessment() {
   }
 }
 
+// ── Scenario 8: Analytics page tour ─────────────────────────────────────────
+async function recordAnalyticsTour() {
+  await recordScenario('analytics-tour', async (page) => {
+    await page.goto(`${BASE_URL}/analytics`, { waitUntil: 'load' });
+    await pause(page, 1500);
+    await page.locator('text=Conversion by Job').first().scrollIntoViewIfNeeded().catch(() => {});
+    await pause(page, 1500);
+    await page.locator('text=Monthly Trends').first().scrollIntoViewIfNeeded().catch(() => {});
+    await pause(page, 1500);
+    await page.locator('text=Score Calibration').first().scrollIntoViewIfNeeded().catch(() => {});
+    await pause(page, 1800);
+  });
+}
+
+// ── Scenario 9: Platform Intelligence page tour ─────────────────────────────
+async function recordIntelligenceTour() {
+  await recordScenario('intelligence-tour', async (page) => {
+    await page.goto(`${BASE_URL}/intelligence`, { waitUntil: 'load' });
+    await pause(page, 1500);
+    await page.locator('text=Learned Skill Aliases').first().scrollIntoViewIfNeeded().catch(() => {});
+    await pause(page, 1500);
+    await page.locator('text=Score Calibration by Job').first().scrollIntoViewIfNeeded().catch(() => {});
+    await pause(page, 1800);
+  });
+}
+
+// ── Scenario 10: a rejected candidate whose recommendation is shown as
+// historical/muted context, not a live call to action ───────────────────────
+async function recordRejectedCandidateContext(jobId: string) {
+  const candidate = await Candidate.create({
+    jobId,
+    name: 'Priya Sharma (Demo)',
+    email: 'priya.sharma.demo@example.com',
+    score: 88,
+    skillsMatch: 90,
+    educationMatch: 100,
+    experience: 5,
+    recommendation: 'Strongly Recommend',
+    currentStage: 'applied',
+    rejected: true,
+    rejectedAt: new Date(),
+    rejectedBy: 'Maya Kim',
+    skillGaps: [],
+  });
+
+  try {
+    await recordScenario('rejected-candidate-context', async (page) => {
+      await page.goto(`${BASE_URL}/candidates`, { waitUntil: 'load' });
+      await pause(page, 1000);
+      await page.selectOption('#stage-filter', 'Rejected');
+      await pause(page, 1200);
+      await page.locator(`text=${candidate.name}`).first().click();
+      await page.waitForURL(/\/candidates\/[a-f0-9]{24}$/, { timeout: 10000 });
+      await pause(page, 1000);
+      await page.locator('#score-banner').scrollIntoViewIfNeeded().catch(() => {});
+      await pause(page, 2000);
+    });
+  } finally {
+    await Candidate.findByIdAndDelete(candidate._id);
+  }
+}
+
 async function main() {
   console.log('Connecting to MongoDB…');
   await mongoose.connect(MONGODB_URI);
@@ -356,6 +418,15 @@ async function main() {
 
     console.log('Recording: reschedule-assessment');
     await recordRescheduleAssessment();
+
+    console.log('Recording: analytics-tour');
+    await recordAnalyticsTour();
+
+    console.log('Recording: intelligence-tour');
+    await recordIntelligenceTour();
+
+    console.log('Recording: rejected-candidate-context');
+    await recordRejectedCandidateContext(jobId);
   } finally {
     if (devServer) devServer.kill();
     await mongoose.disconnect();

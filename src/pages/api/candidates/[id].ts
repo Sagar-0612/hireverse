@@ -5,8 +5,9 @@ import { Interview } from '../../../db/models/Interview';
 import { Assessment } from '../../../db/models/Assessment';
 import { Job } from '../../../db/models/Job';
 import { Types } from 'mongoose';
-import { findStage, isValidStageTransition, findInterviewGateStage, findAssessmentGateStage, isInterviewStage, isAssessmentStage } from '../../../lib/pipeline';
+import { findStage, isValidStageTransition, findInterviewGateStage, findAssessmentGateStage, isInterviewStage, isAssessmentStage, isHiredStage } from '../../../lib/pipeline';
 import { logActivity } from '../../../lib/activity';
+import { recordOutcomeSignal } from '../../../lib/learningEngine';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
@@ -38,6 +39,17 @@ export const PUT: APIRoute = async ({ params, request }) => {
       candidate.rejectedBy = body.rejectedBy || 'Maya Kim';
       if (body.notes) candidate.notes = body.notes;
       await candidate.save();
+
+      // Outcome calibration signal (ai-architecture-recommendation.txt section
+      // 10) — append-only, read-only insight; never feeds back into this or
+      // any other candidate's score.
+      await recordOutcomeSignal({
+        jobId: candidate.jobId.toString(),
+        candidateId: candidate._id.toString(),
+        score: candidate.score,
+        fromStageKey: candidate.currentStage,
+        outcome: 'rejected',
+      });
 
       await logActivity({
         type: 'candidate',
@@ -159,6 +171,18 @@ export const PUT: APIRoute = async ({ params, request }) => {
       } as any);
       candidate.currentStage = toStage.key;
       await candidate.save();
+
+      // Outcome calibration signal (ai-architecture-recommendation.txt section
+      // 10) — append-only, read-only insight; never feeds back into this or
+      // any other candidate's score.
+      await recordOutcomeSignal({
+        jobId: candidate.jobId.toString(),
+        candidateId: candidate._id.toString(),
+        score: candidate.score,
+        fromStageKey: fromStage?.key,
+        toStageKey: toStage.key,
+        outcome: isHiredStage(job.pipeline, toStage.key) ? 'hired' : 'advanced',
+      });
 
       // Interviews still awaiting their session were scheduled for "wherever
       // the candidate currently sits" — when the candidate moves on before

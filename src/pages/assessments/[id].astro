@@ -148,8 +148,8 @@ if (!isEvaluated && suggestedQuestions.length === 0 && candidateDoc) {
             <div style="display:flex;align-items:center;gap:12px;">
               <div style={`font-size:36px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${assessment.overallScore >= 80 ? '#10b981' : assessment.overallScore >= 60 ? '#f59e0b' : '#ef4444'};`}>{assessment.overallScore}</div>
               <div>
-                <div style="font-size:15px;font-weight:500;color:var(--fg);">{assessment.recommendation}</div>
-                <div style="font-size:12px;color:var(--fg-mute);">AI recommendation</div>
+                <div style={`font-size:15px;font-weight:500;color:${assessment.candidateRejected ? 'var(--fg-mute)' : 'var(--fg)'};${assessment.candidateRejected ? 'font-style:italic;' : ''}`} title={assessment.candidateRejected ? 'Candidate has since been rejected — this recommendation reflects this assessment only.' : ''}>{assessment.recommendation}</div>
+                <div style="font-size:12px;color:var(--fg-mute);">AI recommendation{assessment.candidateRejected && ' · candidate since rejected'}</div>
               </div>
             </div>
           </div>

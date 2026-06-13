@@ -5,6 +5,7 @@ import { Job } from '../../../../db/models/Job';
 import { Types } from 'mongoose';
 import { extractResumeText, analyzeResume } from '../../../../lib/resumeAnalysis';
 import { logActivity } from '../../../../lib/activity';
+import { getLearnedAliases } from '../../../../lib/learningEngine';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
@@ -36,12 +37,13 @@ export const POST: APIRoute = async ({ params }) => {
     return json({ error: "Couldn't extract readable text from this resume file — re-analysis needs real text to work with." }, 400);
   }
 
+  const learnedAliases = await getLearnedAliases();
   const analysis = analyzeResume(text, candidate.resumeName, {
     requiredSkills: job.requiredSkills,
     niceToHaveSkills: job.niceToHaveSkills,
     education: job.education,
     level: job.level,
-  });
+  }, learnedAliases);
 
   const before = {
     score: candidate.score,

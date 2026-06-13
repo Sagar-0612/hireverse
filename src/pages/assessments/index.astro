@@ -8,7 +8,7 @@ import { isOverdue } from "../../lib/scheduling";
 
 await connectDB();
 const rawAssessments = await Assessment.find()
-  .populate('candidateId', 'name')
+  .populate('candidateId', 'name rejected')
   .populate('jobId', 'title pipeline')
   .sort({ createdAt: -1 })
   .lean();
@@ -28,6 +28,7 @@ const assessments = rawAssessments.map(a => {
     dueTime: a.dueTime || '',
     candidateName: (a.candidateId as any)?.name || 'Unknown',
     candidateId: (a.candidateId as any)?._id?.toString() || '',
+    candidateRejected: !!(a.candidateId as any)?.rejected,
     jobTitle: job?.title || '',
     stageLabel: stage?.label || '',
     stageColor: stage?.color || '#6b7280',
@@ -102,7 +103,7 @@ const fmtDate = (d: Date) => new Date(d).toLocaleDateString('en-US', { year: 'nu
         <a href="/assessments/create" class="btn btn-primary btn-sm" style="margin-top:12px;">Create One</a>
       </div>
     ) : (
-      <div id="pending-list" style="display:flex;flex-direction:column;gap:12px;">
+      <div id="pending-list" style="display:flex;flex-direction:column;gap:12px;max-height:600px;overflow-y:auto;padding-right:4px;">
         {pending.map(a => (
           <div class="card shadow-lvl-2 as-row"
             data-name={a.candidateName.toLowerCase()}
@@ -137,7 +138,7 @@ const fmtDate = (d: Date) => new Date(d).toLocaleDateString('en-US', { year: 'nu
     {submitted.length === 0 ? (
       <div class="empty-state card shadow-lvl-2"><div style="font-size:15px;font-weight:500;color:var(--fg);">No assessments awaiting evaluation</div></div>
     ) : (
-      <div id="submitted-list" style="display:flex;flex-direction:column;gap:12px;">
+      <div id="submitted-list" style="display:flex;flex-direction:column;gap:12px;max-height:600px;overflow-y:auto;padding-right:4px;">
         {submitted.map(a => (
           <div class="card shadow-lvl-2 as-row"
             data-name={a.candidateName.toLowerCase()}
@@ -173,9 +174,9 @@ const fmtDate = (d: Date) => new Date(d).toLocaleDateString('en-US', { year: 'nu
       <div class="empty-state card shadow-lvl-2"><div style="font-size:15px;font-weight:500;color:var(--fg);">No evaluated assessments</div></div>
     ) : (
       <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
-        <div class="table-container">
+        <div class="table-container" style="max-height:600px;overflow-y:auto;">
           <table>
-            <thead>
+            <thead style="position:sticky;top:0;z-index:1;background:var(--card-bg);">
               <tr>
                 <th>Candidate</th><th>Job</th><th>Round</th><th>Type</th><th>Score</th><th>Recommendation</th><th></th>
               </tr>
@@ -187,12 +188,14 @@ const fmtDate = (d: Date) => new Date(d).toLocaleDateString('en-US', { year: 'nu
                   data-job={a.jobTitle}
                   data-type={a.type}
                   data-status={a.status}>
-                  <td style="font-weight:500;color:var(--fg);">{a.candidateName}</td>
+                  <td style="font-weight:500;color:var(--fg);">{a.candidateName}{a.candidateRejected && <span class="badge badge-error" style="font-size:10px;padding:1px 6px;margin-left:6px;">Rejected</span>}</td>
                   <td style="color:var(--fg-body);font-size:13px;">{a.jobTitle}</td>
                   <td style="color:var(--fg-mute);">{a.round}</td>
                   <td style="color:var(--fg-mute);">{typeLabel(a.type)}</td>
                   <td><span class={`badge ${scoreBadgeClass(a.overallScore)}`}>{a.overallScore}</span></td>
-                  <td style="font-size:12px;color:var(--fg-body);max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{a.recommendation}</td>
+                  <td style="font-size:12px;max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title={a.candidateRejected ? 'Candidate has since been rejected — this recommendation reflects this assessment only.' : ''}>
+                    <span style={a.candidateRejected ? 'color:var(--fg-mute);font-style:italic;' : 'color:var(--fg-body);'}>{a.recommendation}</span>
+                  </td>
                   <td><a href={`/assessments/${a.id}`} class="btn btn-ghost btn-sm">Analysis →</a></td>
                 </tr>
               ))}
@@ -206,9 +209,9 @@ const fmtDate = (d: Date) => new Date(d).toLocaleDateString('en-US', { year: 'nu
   <!-- All -->
   <div id="tab-all" class="tab-pane" style="display:none;">
     <div class="card shadow-lvl-2" style="padding:0;overflow:hidden;">
-      <div class="table-container">
+      <div class="table-container" style="max-height:600px;overflow-y:auto;">
         <table>
-          <thead>
+          <thead style="position:sticky;top:0;z-index:1;background:var(--card-bg);">
             <tr>
               <th>Candidate</th><th>Job</th><th>Round</th><th>Type</th><th>Created</th><th>Status</th><th></th>
             </tr>

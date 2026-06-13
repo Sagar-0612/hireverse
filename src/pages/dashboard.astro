@@ -4,8 +4,10 @@ import { connectDB } from "../db/connection";
 import { Job } from "../db/models/Job";
 import { Candidate } from "../db/models/Candidate";
 import { Interview } from "../db/models/Interview";
+import { Assessment } from "../db/models/Assessment";
 import { ActivityLog } from "../db/models/ActivityLog";
 import { bucketForCandidate, getIconSvg, type FunnelBucket } from "../lib/pipeline";
+import { isOverdue } from "../lib/scheduling";
 
 await connectDB();
 
@@ -82,34 +84,43 @@ const recentActivity = recentLogs.map(l => ({
   icon: ACTIVITY_ICON[l.type] || 'circle',
 }));
 
-// Monthly trend (last 6 months)
-const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const now = new Date();
-const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
-const monthlyCandidates = await Candidate.aggregate([
-  { $match: { createdAt: { $gte: sixMonthsAgo } } },
-  { $group: { _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } }, count: { $sum: 1 } } },
-  { $sort: { '_id.year': 1, '_id.month': 1 } },
-]);
-// "Hired" isn't a fixed status — it's whichever candidates currently sit in the
-// last stage of their job's own pipeline. The date they got there is the last
-// entry in their stageHistory (or, lacking history, when their record last changed).
-const hiredByMonth = new Map<string, number>();
-for (const c of hiredCandidates) {
-  const hist = c.stageHistory || [];
-  const at = new Date(hist.length ? hist[hist.length - 1].movedAt : c.updatedAt);
-  if (at < sixMonthsAgo) continue;
-  const k = `${at.getFullYear()}-${at.getMonth() + 1}`;
-  hiredByMonth.set(k, (hiredByMonth.get(k) || 0) + 1);
-}
-const monthlyTrends = [];
-for (let i = 5; i >= 0; i--) {
-  const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-  const yr = d.getFullYear(); const mo = d.getMonth() + 1;
-  const apps = monthlyCandidates.find((x: any) => x._id.year === yr && x._id.month === mo)?.count || 0;
-  const hires = hiredByMonth.get(`${yr}-${mo}`) || 0;
-  monthlyTrends.push({ month: months[mo - 1], applications: apps, hires });
-}
+// "Needs Attention" — the operational, action-oriented view that the
+// historical/aggregate Analytics page deliberately does NOT show: anything
+// overdue right now that a recruiter should act on today.
+const overdueInterviewsRaw = await Interview.find({ status: { $in: ['scheduled', 'rescheduled'] } })
+  .populate('candidateId', 'name')
+  .populate('jobId', 'title')
+  .lean();
+const overdueInterviews = overdueInterviewsRaw
+  .filter(iv => isOverdue(iv.date, iv.time, true))
+  .map(iv => ({
+    id: iv._id.toString(),
+    candidateName: (iv.candidateId as any)?.name || 'Unknown',
+    jobTitle: (iv.jobId as any)?.title || '',
+    round: iv.round,
+    date: iv.date,
+    time: iv.time,
+  }));
+
+const overdueAssessmentsRaw = await Assessment.find({ status: { $ne: 'evaluated' } })
+  .populate('candidateId', 'name')
+  .populate('jobId', 'title')
+  .lean();
+const overdueAssessments = overdueAssessmentsRaw
+  .filter(a => isOverdue(a.dueDate || '', a.dueTime || '', true))
+  .map(a => ({
+    id: a._id.toString(),
+    candidateName: (a.candidateId as any)?.name || 'Unknown',
+    jobTitle: (a.jobId as any)?.title || '',
+    round: a.round,
+    dueDate: a.dueDate,
+  }));
+
+const needsAttention = [
+  ...overdueInterviews.map(iv => ({ ...iv, kind: 'interview' as const, href: `/interviews/${iv.id}`, label: `${iv.round} overdue — was ${iv.date} ${iv.time}` })),
+  ...overdueAssessments.map(a => ({ ...a, kind: 'assessment' as const, href: `/assessments/${a.id}`, label: `${a.round} overdue — due ${a.dueDate}` })),
+].slice(0, 6);
+const needsAttentionTotal = overdueInterviews.length + overdueAssessments.length;
 ---
 
 <AppLayout title="Dashboard" activeNav="dashboard">
@@ -196,31 +207,34 @@ for (let i = 5; i >= 0; i--) {
         )}
       </div>
 
-      <!-- Monthly Trend -->
+      <!-- Needs Attention -->
       <div class="card shadow-lvl-2">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
-          <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0;">Monthly Trends</h2>
-          <div style="display:flex;gap:16px;font-size:12px;color:var(--fg-mute);">
-            <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--fg);display:inline-block;"></span>Applications</span>
-            <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:2px;background:#0070f3;display:inline-block;"></span>Hires</span>
-          </div>
+          <h2 style="font-size:14px;font-weight:600;color:var(--fg);margin:0;">Needs Attention</h2>
+          {needsAttentionTotal > 0 && <span class="badge badge-error" style="font-size:11px;">{needsAttentionTotal} overdue</span>}
         </div>
-        <div style="display:flex;gap:8px;align-items:flex-end;height:120px;">
-          {monthlyTrends.map(m => {
-            const maxApps = Math.max(...monthlyTrends.map(x => x.applications), 1);
-            const appH = Math.max(Math.round((m.applications / maxApps) * 100), m.applications > 0 ? 4 : 0);
-            const hireH = Math.max(Math.round((m.hires / maxApps) * 100), m.hires > 0 ? 4 : 0);
-            return (
-              <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;">
-                <div style="width:100%;display:flex;gap:2px;align-items:flex-end;height:100px;">
-                  <div style={`flex:1;height:${appH}%;background:var(--fg);border-radius:3px 3px 0 0;opacity:0.8;min-height:${m.applications>0?'4px':'0'};`}></div>
-                  <div style={`flex:1;height:${hireH}%;background:#0070f3;border-radius:3px 3px 0 0;min-height:${m.hires>0?'4px':'0'};`}></div>
+        {needsAttention.length === 0 ? (
+          <div style="text-align:center;padding:20px;color:var(--fg-mute);font-size:13px;">Nothing overdue — all interviews and assessments are on schedule.</div>
+        ) : (
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            {needsAttention.map(item => (
+              <a href={item.href} style="display:flex;gap:12px;padding:10px;border-radius:6px;background:var(--bg-soft);text-decoration:none;border:1px solid var(--border);">
+                <div style="flex-shrink:0;width:36px;height:36px;border-radius:6px;background:#ef444422;display:flex;align-items:center;justify-content:center;color:#ef4444;">
+                  <span set:html={getIconSvg(item.kind === 'interview' ? 'calendar' : 'flag')} style="display:inline-flex;width:14px;height:14px;" />
                 </div>
-                <div style="font-size:11px;color:var(--fg-mute);font-family:'JetBrains Mono',monospace;">{m.month}</div>
-              </div>
-            );
-          })}
-        </div>
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:13px;font-weight:500;color:var(--fg);">{item.candidateName} <span style="color:var(--fg-mute);font-weight:400;">· {item.jobTitle}</span></div>
+                  <div style="font-size:12px;color:#ef4444;margin-top:2px;">{item.label}</div>
+                </div>
+              </a>
+            ))}
+          </div>
+        )}
+        {needsAttentionTotal > needsAttention.length && (
+          <div style="margin-top:10px;text-align:center;">
+            <a href="/interviews" class="btn btn-ghost btn-sm">View all overdue →</a>
+          </div>
+        )}
       </div>
     </div>
 

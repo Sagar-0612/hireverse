@@ -29,15 +29,22 @@ export interface ISkillGap {
   relatedSkill?: string;
   score: number;
   required: boolean;
+  // Set when this skill's classification was upgraded from "missing" via a
+  // platform-learned alias (see src/lib/learningEngine.ts) rather than the
+  // static skillRelations lexicon — `learnedOccurrences` is how many distinct
+  // recruiter corrections support that alias at the time this candidate was
+  // (re-)analyzed, so the UI can show "(learned from recruiter corrections)".
+  learnedOccurrences?: number;
 }
 
 const SkillGapSchema = new Schema<ISkillGap>(
   {
-    skill:        { type: String, required: true },
-    status:       { type: String, enum: ['practical', 'listed', 'related', 'missing'], required: true },
-    relatedSkill: { type: String },
-    score:        { type: Number, default: 0 },
-    required:     { type: Boolean, default: true },
+    skill:              { type: String, required: true },
+    status:             { type: String, enum: ['practical', 'listed', 'related', 'missing'], required: true },
+    relatedSkill:       { type: String },
+    score:              { type: Number, default: 0 },
+    required:           { type: Boolean, default: true },
+    learnedOccurrences: { type: Number },
   },
   { _id: false }
 );
